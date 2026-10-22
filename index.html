@@ -197,7 +197,8 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
     </div>
     <div class="tabbody" id="tab-designs" hidden>
       <h3>Save this design</h3>
-      <div class="row"><input type="text" id="d-name" placeholder="e.g. Sauna by the upper lawn" style="flex:1"><button class="btn primary" id="d-save">Save</button></div>
+      <div class="row"><label for="d-target" style="flex:0 0 auto">Save to</label><select id="d-target" style="flex:1"><option value="new">New design</option></select></div>
+      <div class="row"><input type="text" id="d-name" placeholder="e.g. Sauna by the upper lawn" style="flex:1" aria-label="Design name"><button class="btn primary" id="d-save">Save</button></div>
       <p id="d-status" class="note">Your changes are also kept automatically in this browser.</p>
       <h3>Saved designs</h3>
       <div class="designs" id="d-list"><p>Saved designs will appear here.</p></div>
@@ -1416,16 +1417,49 @@ const LOCAL_DESIGNS = STORE_KEY + '-designs';
 function localDesigns(){ try { return JSON.parse(localStorage.getItem(LOCAL_DESIGNS) || '{}'); } catch(e){ return {}; } }
 function writeLocalDesigns(m){ localStorage.setItem(LOCAL_DESIGNS, JSON.stringify(m)); }
 function designId(name){ return (name.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40)) || uid(); }
-function renderDesigns(){
-  const rows = [
+const LAST_KEY = STORE_KEY + '-last-design';
+let lastDesign = null; try { lastDesign = localStorage.getItem(LAST_KEY); } catch(e){}
+let designRows = [];
+function setLastDesign(key){ lastDesign = key; try { localStorage.setItem(LAST_KEY, key); } catch(e){} }
+function camState(){ // the current camera, so opening a design returns to the same view
+  const c = camera===ortho ? ocontrols : controls, v = ui.view==='walk' ? 'aerial' : ui.view;
+  return {view:v, cut:ui.cut, pos:camera.position.toArray(), tgt:c.target.toArray(), zoom:ortho.zoom};
+}
+function applyCam(cs){
+  if (!cs) return;
+  setView(VIEWS[cs.view]||cs.view==='plan' ? cs.view : 'aerial');
+  const c = camera===ortho ? ocontrols : controls;
+  camera.position.fromArray(cs.pos); c.target.fromArray(cs.tgt);
+  if (camera===ortho){ ortho.zoom = cs.zoom||1; ortho.updateProjectionMatrix(); }
+  c.update(); if (cs.cut){ ui.cut = cs.cut; applyCut(); }
+}
+function renderTarget(preferLast){
+  const sel = document.getElementById('d-target'), nameEl = document.getElementById('d-name');
+  const keep = sel.value && sel.value!=='new' ? sel.value : null;
+  sel.innerHTML = designRows.map(v=>`<option value="${v.where}|${v.id}">${escapeHtml(v.name||'Untitled')}${v.where==='browser'?' (this browser)':''}</option>`).join('') + '<option value="new">New design…</option>';
+  const want = (preferLast ? [lastDesign, keep] : [keep, lastDesign]).find(k=>k && designRows.some(v=>`${v.where}|${v.id}`===k));
+  sel.value = want || 'new';
+  if (document.activeElement!==nameEl) nameEl.value = want ? (designRows.find(v=>`${v.where}|${v.id}`===want).name||'') : '';
+  document.getElementById('d-save').textContent = want ? 'Update' : 'Save';
+}
+document.getElementById('d-target').onchange = (e)=>{
+  const v = designRows.find(r=>`${r.where}|${r.id}`===e.target.value);
+  document.getElementById('d-name').value = v ? (v.name||'') : '';
+  document.getElementById('d-save').textContent = v ? 'Update' : 'Save';
+  if (!v) document.getElementById('d-name').focus();
+};
+function renderDesigns(preferLast){
+  const rows = designRows = [
     ...dbDocs.map(d=>({...d, where:'page'})),
     ...Object.entries(localDesigns()).map(([id,v])=>({id, ...v, where:'browser'}))
   ].sort((x,y)=>(y.updatedAt||0)-(x.updatedAt||0));
+  renderTarget(preferLast);
   if (!rows.length){ dList.innerHTML = '<p>No saved designs yet. Name your design above and press Save.</p>'; return; }
-  dList.innerHTML = rows.map(v=>{ const n=(v.data?.objects||[]).filter(o=>o.state==='proposed').length;
-    return `<div class="design"><div><b>${escapeHtml(v.name||'Untitled')}</b><small>${new Date(v.updatedAt||0).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'})} · ${n} proposed · ${v.where==='page'?'saved to page':'this browser'}</small></div><button class="btn" data-load="${v.where}|${v.id}">Open</button><button class="btn danger" data-del="${v.where}|${v.id}" aria-label="Delete">✕</button></div>`; }).join('');
+  dList.innerHTML = rows.map(v=>{ const n=(v.data?.objects||[]).filter(o=>o.state==='proposed').length, key=`${v.where}|${v.id}`;
+    return `<div class="design"><div><b>${escapeHtml(v.name||'Untitled')}${key===lastDesign?' <span class="pill existing">last used</span>':''}</b><small>${new Date(v.updatedAt||0).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'})} · ${n} proposed · ${v.where==='page'?'saved to page':'this browser'}${v.cam?' · with view':''}</small></div><button class="btn" data-load="${key}">Open</button><button class="btn danger" data-del="${key}" aria-label="Delete">✕</button></div>`; }).join('');
   dList.querySelectorAll('[data-load]').forEach(btn=>btn.onclick=()=>{ const [w,id]=btn.dataset.load.split('|'); const v = rows.find(r=>r.where===w && r.id===id);
-    if (v?.data){ state.garden={...DEFAULT_STATE().garden, ...v.data.garden}; state.objects=v.data.objects; rebuildAll(); syncGardenUI(); select(null); pushHistory(); document.getElementById('d-name').value=v.name||''; dStatus.textContent=`Opened “${v.name}”.`; } });
+    if (v?.data){ state.garden={...DEFAULT_STATE().garden, ...v.data.garden}; state.objects=v.data.objects; rebuildAll(); syncGardenUI(); select(null); pushHistory(); applyCam(v.cam);
+      setLastDesign(btn.dataset.load); renderDesigns(true); dStatus.textContent=`Opened “${v.name}”. Save now updates this design.`; } });
   dList.querySelectorAll('[data-del]').forEach(btn=>btn.onclick=async ()=>{
     if (!btn.dataset.armed){ btn.dataset.armed='1'; btn.textContent='Delete?'; setTimeout(()=>{ btn.textContent='✕'; delete btn.dataset.armed; }, 3000); return; }
     const [w,id]=btn.dataset.del.split('|');
@@ -1443,16 +1477,22 @@ renderDesigns();
   }, err=>{ dStatus.textContent = `Saved designs on the page could not be loaded (${err.message||err.code}).`; });
 })();
 document.getElementById('d-save').onclick = async ()=>{
-  const name = document.getElementById('d-name').value.trim() || 'Design ' + new Date().toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'});
-  const id = designId(name), doc = {name, updatedAt: Date.now(), data:{garden:state.garden, objects:state.objects}};
+  const target = document.getElementById('d-target').value;
+  const existing = designRows.find(r=>`${r.where}|${r.id}`===target);
+  const name = document.getElementById('d-name').value.trim() || existing?.name || 'Design ' + new Date().toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'});
+  const doc = {name, updatedAt: Date.now(), cam: camState(), data:{garden:state.garden, objects:state.objects}};
+  const verb = existing ? 'Updated' : 'Saved';
   dStatus.textContent = 'Saving…';
-  if (db){
-    try { await db.doc('designs/'+id).set(doc); dStatus.textContent = `Saved “${name}” to the page. It opens on any device where you open this page.`; return; }
-    catch(e){ dStatus.textContent = `Saving to the page failed (${e.message||e.code}); saving in this browser instead.`; }
-  }
-  try { const m = localDesigns(); m[id] = doc; writeLocalDesigns(m); renderDesigns();
-    if (!db) dStatus.textContent = `Saved “${name}” in this browser. Use Export JSON to open it on another device.`; }
-  catch(e){ dStatus.textContent = 'This browser blocks storage (private window?). Use Export JSON to keep a copy.'; }
+  const saveLocal = (id)=>{ const m = localDesigns(); m[id] = doc; writeLocalDesigns(m); setLastDesign('browser|'+id); renderDesigns(true); };
+  try {
+    if (existing?.where==='browser'){ saveLocal(existing.id); dStatus.textContent = `${verb} “${name}” in this browser.`; return; }
+    const id = existing ? existing.id : designId(name);
+    if (db){
+      try { await db.doc('designs/'+id).set(doc); setLastDesign('page|'+id); renderDesigns(true); dStatus.textContent = `${verb} “${name}” on the page, with the current view. It opens on any device.`; return; }
+      catch(e){ dStatus.textContent = `Saving to the page failed (${e.message||e.code}); saving in this browser instead.`; }
+    }
+    saveLocal(id); if (!db) dStatus.textContent = `${verb} “${name}” in this browser. Use Export JSON to open it on another device.`;
+  } catch(e){ dStatus.textContent = 'This browser blocks storage (private window?). Use Export JSON to keep a copy.'; }
 };
 document.getElementById('d-export').onclick = async ()=>{
   const json = JSON.stringify({v:1, garden:state.garden, objects:state.objects}, null, 1);

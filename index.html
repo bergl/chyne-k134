@@ -338,6 +338,7 @@ const WALLM = {concrete:'Concrete',fence:'Panel fence',gabion:'Gabion',wood:'Woo
 const TYPES = {
   tree:{f:[['kind','Species',KINDS],['h','Height',.5,25,.1],['crown','Crown width',.3,15,.1]]},
   sauna_barrel:{f:[['w','Length',1.5,6,.1],['d','Diameter',1.5,3,.1]],hole:false},
+  sauna_cube:{f:[['w','Length (glass side)',2,6,.1],['d','Depth',1.6,4,.1],['h','Height',2.2,3.2,.05],['step','Entrance step',0,1.5,.05]]},
   sauna_cabin:{f:[['w','Width',1.5,6,.1],['d','Depth',1.5,5,.1],['h','Height',2,3.5,.05],['porch','Porch depth',0,2.5,.1]]},
   pool:{f:[['w','Length',1.5,15,.1],['d','Width',1,8,.1],['depth','Water depth',.3,2,.05]],hole:true},
   pool_round:{f:[['w','Diameter',2,8,.1],['h','Wall height',.6,1.5,.05]]},
@@ -362,6 +363,7 @@ const TYPES = {
 const LIBRARY = [
   ['Wellness',[
     ['Barrel sauna','sauna_barrel',{w:3,d:2.2},'3.0 × Ø2.2 m'],
+    ['Glass-front sauna','sauna_cube',{w:3.6,d:2.4,h:2.55,step:.8},'3.6 × 2.4 m'],
     ['Cabin sauna','sauna_cabin',{w:2.6,d:2.2,h:2.4,porch:1.2},'2.6 × 2.2 m'],
     ['Hot tub','hottub',{w:2.2,d:2.2,h:.9},'2.2 × 2.2 m'],
     ['Outdoor fire pit','firepit',{w:1},'Ø1.0 m']]],
@@ -414,7 +416,7 @@ const LIBRARY = [
 const BP = 'From your balcony photos, Oct 2026 (about ±1 m).';
 const PH = 'Placed from listing photos 813-26930, -26931, -26934 and -26936 (about ±1 m).';
 const DEFAULT_STATE = () => ({
-  v:2, dv:3,
+  v:2, dv:4,
   garden:{dist:14.5, ang:0, h:0.5, low:-0.12, steps:0.5, sw:2.2},
   objects:[
     {id:'terraceA',type:'paving',name:'Terrace by living room',state:'existing',x:-1.6,y:2.55,rot:0,dz:0,p:{mat:'tiles',w:3.2,d:6.1,h:.1},note:'Large dark-grey format tiles. '+PH},
@@ -468,7 +470,7 @@ const DEFAULT_STATE = () => ({
     {id:'olive',type:'tree',name:'Potted plant by the glazing (olive?)',state:'existing',x:2.25,y:5.6,rot:0,dz:.35,p:{kind:'olive',h:1.1,crown:.7},note:'The olive from the owner history; a potted plant stands here in the balcony photos. Move it if the olive is elsewhere.'},
     {id:'zone1',type:'zone',name:'Upper-garden project area',state:'proposed',x:-19.6,y:4.6,rot:0,dz:0,p:{w:9,d:6},note:'Owner brief: project envelope up to 10 × 6 m.'},
     {id:'poolA',type:'pool',name:'Plunge pool 4 × 2 m',state:'proposed',x:-19.6,y:2.6,rot:0,dz:0,p:{w:4,d:2,depth:1.4},note:'Owner idea: water area about 4 × 2 m.'},
-    {id:'saunaA',type:'sauna_barrel',name:'Barrel sauna',state:'proposed',x:-20.0,y:6.6,rot:0,dz:0,p:{w:3,d:2.2},note:'Example placement next to the pool.'},
+    {id:'saunaA',type:'sauna_cube',name:'Glass-front sauna',state:'proposed',x:-20.2,y:6.9,rot:90,dz:0,p:{w:3.6,d:2.4,h:2.55,step:.8},note:'Modern cube sauna: anthracite cladding, glass front facing the house, glazed door and step toward the pool.'},
     {id:'pergolaA',type:'pergola',name:'Pergola',state:'proposed',x:-0.3,y:7.7,rot:0,dz:0,p:{w:5,d:3.5,h:2.6},note:'Over the dining terrace, from your saved design “pergola”. Owner brief: pergola about 5 × 3.5 m.'}
   ]
 });
@@ -603,6 +605,10 @@ const mat = {
   pv: M({color:0x1d2633, roughness:.3, metalness:.6})
 };
 const paveMat = {};
+const cladTex = canvasTex(256,(g,s2)=>{ g.fillStyle='#fff'; g.fillRect(0,0,s2,s2); for (let i=0;i<8;i++){ const y=i*s2/8; g.fillStyle='rgba(0,0,0,.35)'; g.fillRect(0,y,s2,2); g.fillStyle='rgba(255,255,255,.25)'; g.fillRect(0,y+2,s2,1); for (let k=0;k<40;k++){ g.fillStyle=`rgba(0,0,0,${rnd()*.06})`; g.fillRect(rnd()*s2,y+3+rnd()*(s2/8-4),20+rnd()*60,1); } } });
+cladTex.repeat.set(1.5,1.5);
+const saunaClad = M({color:0x3a4046, map:cladTex, roughness:.75}), saunaFrame = M({color:0x2c3136, roughness:.55, metalness:.15});
+const saunaStone = M({color:0x55585c, roughness:.9}), saunaWood = M({color:0xe2c49a, roughness:.8}), saunaHeater = M({color:0x3a3a3a, roughness:.5, metalness:.6});
 const furnCushLight = M({color:0xe7e4dd, roughness:.95}), furnCushDark = M({color:0x222326, roughness:.9}), furnPillowGrey = M({color:0x9b9d9f, roughness:.95});
 const glassTop = M({color:0xbccbd0, roughness:.08, metalness:.25});
 for (const k of Object.keys(PAVE)) paveMat[k] = M({color: {slabs:0xffffff, mulch:0xffffff, tiles:0x8f908c, concrete:0xa9a7a0, setts:0xffffff, gravel:0xffffff, grasspavers:0xffffff, wood:0xb48356}[k], map: tex[k] || tex.tiles});
@@ -797,14 +803,18 @@ const measureGroup = new THREE.Group(); scene.add(measureGroup);
 
 /* ================= STATE ================= */
 const STORE_KEY = 'chyne-k134-garden-v2';
-const DEFAULTS_VERSION = 3;
+const DEFAULTS_VERSION = 4;
 // earlier default values: items still at these values were never edited and can take the corrected ones
 const OLD_DEFAULTS = {olive:{x:-2.6,y:1.2}, platform:{x:-16.4,y:2.6}, bedSE:{y:11.4}, hedge:{y:12.6}, treeA:{crown:4}};
 function migrateDesign(d){
   if (!d || !Array.isArray(d.objects) || (d.dv||1) >= DEFAULTS_VERSION) return d;
-  const defs = DEFAULT_STATE().objects, have = new Set(d.objects.map(o=>o.id));
-  for (const o of defs) if (o.since===3 && !have.has(o.id)) d.objects.push(JSON.parse(JSON.stringify(o)));
-  for (const o of d.objects){ const old = OLD_DEFAULTS[o.id], def = defs.find(q=>q.id===o.id); if (!old || !def) continue;
+  const ver = d.dv||1, defs = DEFAULT_STATE().objects, have = new Set(d.objects.map(o=>o.id));
+  if (ver < 4){ // the example barrel sauna became the glass-front sauna, unless it was moved or resized
+    const o = d.objects.find(q=>q.id==='saunaA'), def = defs.find(q=>q.id==='saunaA');
+    if (o && o.type==='sauna_barrel' && Math.abs(o.x+20)<.01 && Math.abs(o.y-6.6)<.01 && Math.abs(o.p.w-3)<.01) Object.assign(o, JSON.parse(JSON.stringify(def)));
+  }
+  for (const o of defs) if (o.since > ver && !have.has(o.id)) d.objects.push(JSON.parse(JSON.stringify(o)));
+  if (ver < 3) for (const o of d.objects){ const old = OLD_DEFAULTS[o.id], def = defs.find(q=>q.id===o.id); if (!old || !def) continue;
     if (Object.entries(old).every(([k,v])=>Math.abs((k in o ? o[k] : o.p[k]) - v) < .01)){ o.x=def.x; o.y=def.y; o.dz=def.dz; o.p=JSON.parse(JSON.stringify(def.p)); o.name=def.name; o.note=def.note; } }
   d.dv = DEFAULTS_VERSION; return d;
 }
@@ -855,6 +865,7 @@ function footprint(o){
     case 'pool_round': case 'trampoline': case 'umbrella': case 'firepit': return ellipseFP(o, p.w, p.w, 20);
     case 'pond': return ellipseFP(o, p.w, p.d);
     case 'sauna_barrel': return rectFP(o, p.w, p.d);
+    case 'sauna_cube': return rectFP(o, p.w, p.d + (p.step||0)*0);
     case 'sauna_cabin': return rectFP({...o, x:o.x+Math.sin(o.rot*Math.PI/180)*(p.porch||0)/2, y:o.y+Math.cos(o.rot*Math.PI/180)*(p.porch||0)/2}, p.w, p.d+(p.porch||0));
     case 'steps': return rectFP(o, p.w, Math.max(.3, Math.ceil(p.h/.16)*.32));
     case 'lounger': return rectFP(o, .7, 2.0);
@@ -1155,6 +1166,39 @@ function buildObject(o){
       const door = box(.04,1.7,.7,mat.glass,L/2-.06,.12+.85+.15,0); g.add(door); g.add(box(.05,1.8,.06,mat.alu,L/2-.06,1.12,.38), box(.05,1.8,.06,mat.alu,L/2-.06,1.12,-.38));
       g.add(box(.25,.12,p.d*.9,mat.timberDark,-L/2+.5,.06,0), box(.25,.12,p.d*.9,mat.timberDark,L/2-.5,.06,0));
       const ch = new THREE.Mesh(new THREE.CylinderGeometry(.07,.07,.9,10), mat.alu); ch.position.set(-L/2+.6, 2*R+.12+.25, 0); g.add(ch);
+      break; }
+    case 'sauna_cube': { // modern cube sauna: glass front on local +z, glazed door on local +x
+      const w=p.w, d=p.d, h=p.h, t=.12, pl=.18, top=h-.38, gl=mat.glass, fr=saunaFrame;
+      g.add(box(w,pl,d,saunaStone,0,pl/2,0));                                      // stone plinth
+      const roof=box(w+.08,.38,d+.08,saunaClad,0,h-.19,0); fitUV(roof.geometry,w,.38,1); g.add(roof); // deep fascia + flat roof
+      g.add(box(w-.1,.03,d-.1,mat.roof,0,h+.005,0));
+      const wall=(lx,lz,cx,cz)=>{ const m=box(lx,top-pl,lz,saunaClad,cx,pl+(top-pl)/2,cz); g.add(m); };
+      wall(w,t,0,-d/2+t/2); wall(t,d,-w/2+t/2,0);                                   // back and left walls
+      // right wall: solid part plus glazed door near the front corner
+      const dw=.72, dz0=d/2-.16-dw; wall(t,dz0+d/2,w/2-t/2,(-d/2+dz0)/2);
+      g.add(box(t,top-pl,.16,saunaClad,w/2-t/2,pl+(top-pl)/2,d/2-.08));
+      g.add(box(.06,top-pl,dw,fr,w/2-.03,pl+(top-pl)/2,dz0+dw/2));
+      for (const [y0,y1] of [[.32,.95],[1.05,1.6],[1.7,top-.1]]){ const gm=new THREE.Mesh(new THREE.PlaneGeometry(dw-.14,y1-y0),gl); gm.rotation.y=Math.PI/2; gm.position.set(w/2+.002,pl+(y0+y1)/2,dz0+dw/2); g.add(gm); }
+      g.add(box(.03,.03,.14,mat.alu,w/2+.03,pl+1.0,dz0+.12));                       // handle
+      if (p.step>0){ g.add(box(p.step,.16,dw+.6,saunaStone,w/2+p.step/2,.08,dz0+dw/2)); }
+      // front: three tall panes then a louvred panel, in a slim anthracite frame
+      const fy0=pl, fh=top-pl, lw=Math.min(1.1,w*.28), gw=w-lw-t;
+      g.add(box(w,.1,t,fr,0,pl+.05,d/2-t/2)); g.add(box(w,.12,t,fr,0,top-.06,d/2-t/2));
+      for (let i=0;i<=3;i++){ const x=-w/2+t/2+i*(gw/3); g.add(box(.07,fh,t,fr,x,fy0+fh/2,d/2-t/2)); }
+      g.add(box(.07,fh,t,fr,w/2-t/2,fy0+fh/2,d/2-t/2));
+      for (let i=0;i<3;i++){ const gm=new THREE.Mesh(new THREE.PlaneGeometry(gw/3-.07,fh-.22),gl); gm.position.set(-w/2+t/2+(i+.5)*(gw/3),fy0+fh/2,d/2-.04); g.add(gm); }
+      const lx0=-w/2+t/2+gw+.04, lx1=w/2-t, lcx=(lx0+lx1)/2;
+      const lglass=new THREE.Mesh(new THREE.PlaneGeometry(lx1-lx0,fh-.22),gl); lglass.position.set(lcx,fy0+fh/2,d/2-.08); g.add(lglass);
+      for (let y=fy0+.12; y<top-.1; y+=.105){ const sl=box(lx1-lx0,.018,.11,fr,lcx,y,d/2-.01); sl.rotation.x=-.5; g.add(sl); }
+      // interior: light-wood floor, two-tier benches with backrest, heater with timber guard
+      g.add(box(w-2*t,.03,d-2*t,saunaWood,0,pl+.015,0));
+      const bw=w-2*t-.9, bx=.3;
+      g.add(box(bw,.05,.55,saunaWood,bx,pl+.45,-d/2+t+.75)); g.add(box(bw,.4,.04,saunaWood,bx,pl+.22,-d/2+t+1.02));
+      g.add(box(bw,.05,.6,saunaWood,bx,pl+.92,-d/2+t+.3)); g.add(box(bw,.45,.04,saunaWood,bx,pl+.68,-d/2+t+.6));
+      for (let y=pl+1.1; y<pl+1.55; y+=.11) g.add(box(bw,.07,.02,saunaWood,bx,y,-d/2+t+.02));
+      g.add(box(.42,.75,.4,saunaHeater,-w/2+t+.32,pl+.375,d/2-t-.45));
+      for (let y=pl+.1; y<pl+.8; y+=.12) g.add(box(.5,.06,.02,saunaWood,-w/2+t+.32,y,d/2-t-.22));
+      g.add(box(.4,.1,.38,saunaStone,-w/2+t+.32,pl+.8,d/2-t-.45));
       break; }
     case 'sauna_cabin': {
       const w=p.w,d=p.d,h=p.h,por=p.porch||0;
@@ -1843,7 +1887,7 @@ function makeWater(hq, pond){ const att = pond ? 0x46613d : 0x1aa0c6;
   : new THREE.MeshStandardMaterial({color:pond?0x3d5c4a:0x2f8fb3, roughness:.04, metalness:.25, transparent:true, opacity:.85, normalMap:waterNormal, normalScale:new THREE.Vector2(.3,.3)}); }
 
 /* wind-blown grass blades on the lawns */
-const NO_GRASS = new Set(['boulder','sofa','grill','paving','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','steps','bed','wall','firepit','pillar','carport']);
+const NO_GRASS = new Set(['sauna_cube','boulder','sofa','grill','paving','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','steps','bed','wall','firepit','pillar','carport']);
 const grassGroup = new THREE.Group(); scene.add(grassGroup);
 const grassMat = windify(new THREE.MeshStandardMaterial({vertexColors:true, side:THREE.DoubleSide, roughness:.85}), .045, 'grass');
 let grassTimer = null;
@@ -2095,7 +2139,7 @@ ball.castShadow = true; ball.visible = false; scene.add(ball);
 const dog = {x:-6.5, y:3.2, yaw:Math.PI, h:0, speed:0, phase:0, state:'wander', target:null, timer:2, wag:.3, look:null, sit:0, sniff:0, hop:0, bubble:'', bubbleUntil:0, carrying:false};
 const pointer = {x:0, y:0, t:-1e9, vx:0, vy:0};
 const ballSt = {flying:false, t:0, dur:1, a:null, b:null, onGround:false};
-const DOG_BLOCK = new Set(['sofa','grill','boulder','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','wall','bed','steps','pillar','carport']);
+const DOG_BLOCK = new Set(['sauna_cube','sofa','grill','boulder','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','wall','bed','steps','pillar','carport']);
 function dogFree(x,y){
   if (!pip([x,y], PLOT)) return false;
   if (pip([x,y], insetPoly(GF_POLY,-.35))) return false;

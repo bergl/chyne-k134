@@ -143,6 +143,11 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
       <button data-cut="uf">Upper floor</button>
       <button data-cut="gf">Ground floor</button>
     </div>
+    <div class="seg" role="group" aria-label="Mode">
+      <span class="lbl">Mode</span>
+      <button data-mode="view" aria-pressed="true">View</button>
+      <button data-mode="edit">Edit</button>
+    </div>
     <div class="seg" role="group" aria-label="Edit">
       <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
       <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
@@ -407,16 +412,16 @@ renderer.toneMappingExposure = 1.0;
 const scene = new THREE.Scene();
 const skyCol = new THREE.Color(0xc9dbe6);
 scene.background = skyCol.clone();
-scene.fog = new THREE.Fog(skyCol.clone(), 90, 260);
+scene.fog = new THREE.Fog(skyCol.clone(), 400, 2200);
 
-const persp = new THREE.PerspectiveCamera(45, 1, 0.1, 600);
-const ortho = new THREE.OrthographicCamera(-30,30,30,-30,0.1,600);
+const persp = new THREE.PerspectiveCamera(45, 1, 0.1, 4000);
+const ortho = new THREE.OrthographicCamera(-30,30,30,-30,0.1,4000);
 ortho.up.set(0,0,-1);
 let camera = persp;
 const controls = new OrbitControls(persp, canvas);
-controls.enableDamping = true; controls.maxPolarAngle = Math.PI*0.495; controls.minDistance = 2; controls.maxDistance = 220;
+controls.enableDamping = true; controls.maxPolarAngle = Math.PI*0.495; controls.minDistance = 1; controls.maxDistance = 900; controls.zoomSpeed = 2.2; controls.zoomToCursor = true;
 const ocontrols = new OrbitControls(ortho, canvas);
-ocontrols.enableRotate = false; ocontrols.screenSpacePanning = true; ocontrols.enabled = false; ocontrols.enableDamping = true;
+ocontrols.enableRotate = false; ocontrols.screenSpacePanning = true; ocontrols.enabled = false; ocontrols.enableDamping = true; ocontrols.zoomSpeed = 2.2; ocontrols.minZoom = .04; ocontrols.maxZoom = 12; ocontrols.zoomToCursor = true;
 
 const hemi = new THREE.HemisphereLight(0xe3eef7, 0x5e6b4c, 1.1);
 scene.add(hemi);
@@ -668,7 +673,7 @@ function furn(group, w,h,d, material, x,z, y0=0){ const m=box(w,h,d,material,x,y
 /* ================= SITE: surroundings, plot line, fences ================= */
 const site = new THREE.Group(); scene.add(site);
 {
-  const g = new THREE.Mesh(new THREE.CircleGeometry(260, 48), mat.outside);
+  const g = new THREE.Mesh(new THREE.CircleGeometry(2500, 64), mat.outside);
   g.rotation.x = -Math.PI/2; g.position.set(0,-0.22,5); g.receiveShadow = true; site.add(g);
 }
 const fences = new THREE.Group(); scene.add(fences);
@@ -1006,6 +1011,25 @@ function clearanceHTML(o){
   return s;
 }
 const propsEl = document.getElementById('props');
+function showObjectInfo(o){
+  if (!o) return;
+  roomCard.innerHTML = `<b>${escapeHtml(o.name)}</b> <span class="pill ${o.state}">${o.state}</span><br><span class="mono">${clearanceHTML(o).replace(/<br>/g,' · ')}</span>${o.note?`<br><span style="color:var(--muted)">${escapeHtml(o.note)}</span>`:''}`;
+  roomCard.hidden = false; clearTimeout(roomCard._t); roomCard._t = setTimeout(()=>roomCard.hidden=true, 7000);
+}
+function setMode(m){
+  ui.edit = m==='edit';
+  document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed', b.dataset.mode===m));
+  document.getElementById('undo').hidden = document.getElementById('redo').hidden = !ui.edit;
+  const bt = document.querySelector('[data-tab=build]'); bt.hidden = !ui.edit;
+  if (!ui.edit && bt.getAttribute('aria-selected')==='true') document.querySelector('[data-tab=layers]').click();
+  if (ui.edit && m!==ui._lastMode) bt.click();
+  document.querySelectorAll('#tab-garden input[type=range], #d-save, #d-reset, #d-import, label[for=d-import]').forEach(el=>{ el.toggleAttribute('disabled', !ui.edit); if (el.tagName==='LABEL') el.hidden = !ui.edit; });
+  document.getElementById('d-reset').hidden = !ui.edit;
+  if (!ui.edit){ select(null); if (drag){ drag=null; setControlsForView(); } }
+  setStatus(null); ui._lastMode = m;
+  try{ localStorage.setItem(STORE_KEY+'-mode', m); }catch(e){}
+}
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
 function renderProps(){
   const o = getObj(ui.selected);
   if (!o){ propsEl.hidden = true; propsEl.innerHTML=''; return; }
@@ -1085,7 +1109,7 @@ canvas.addEventListener('pointerdown', e=>{
   down = {x:e.clientX, y:e.clientY, t:performance.now()};
   if (e.button!==0) return;
   setNDC(e);
-  if (ui.measuring) return;
+  if (ui.measuring || !ui.edit) return;
   const hit = pickObject();
   if (hit){
     const o = getObj(hit.id);
@@ -1112,10 +1136,13 @@ canvas.addEventListener('pointerup', e=>{
   if (moved || e.button!==0) return;
   setNDC(e);
   if (ui.measuring){ measureClick(); return; }
-  if (!pickObject()){ select(null); showRoomInfo(); }
+  const hit = pickObject();
+  if (!ui.edit){ hit ? showObjectInfo(getObj(hit.id)) : showRoomInfo(); return; }
+  if (!hit){ select(null); showRoomInfo(); }
 });
 addEventListener('keydown', e=>{
   if (e.target.matches('input,select,textarea')) return;
+  if (!ui.edit){ walk.keys[e.key.toLowerCase()] = true; if (e.key==='Escape' && walk.on) setView('aerial'); return; }
   if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'){ e.preventDefault(); document.getElementById(e.shiftKey?'redo':'undo').click(); return; }
   if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='y'){ e.preventDefault(); document.getElementById('redo').click(); return; }
   const o = getObj(ui.selected);
@@ -1302,7 +1329,7 @@ let playing=false; document.getElementById('s-play').onclick=(e)=>{ playing=!pla
 document.querySelectorAll('[role=tab]').forEach(t=>t.onclick=()=>{ document.querySelectorAll('[role=tab]').forEach(x=>{ x.setAttribute('aria-selected', x===t); document.getElementById('tab-'+x.dataset.tab).hidden = x!==t; }); });
 document.getElementById('toggleTools').onclick=()=>document.getElementById('panel').classList.toggle('collapsed');
 if (innerWidth<=760) document.getElementById('panel').classList.add('collapsed');
-function setStatus(t){ document.getElementById('status').textContent = t || 'Drag to orbit · right-drag or two fingers to pan · click a tree or object to edit it'; }
+function setStatus(t){ document.getElementById('status').textContent = t || (ui.edit ? 'Edit mode · drag objects to move them · Q / E rotate · Delete removes' : 'View mode · drag to orbit · scroll or pinch to zoom · click anything for details'); }
 
 /* ---------- data tab ---------- */
 document.getElementById('tab-about').innerHTML = `
@@ -1382,6 +1409,7 @@ function loop(now){
   requestAnimationFrame(loop);
 }
 renderBuild(); renderLayers(); syncGardenUI(); applyLayers(); rebuildAll(); updateSun(); setView('aerial'); pushHistory();
+let savedMode='view'; try{ savedMode = localStorage.getItem(STORE_KEY+'-mode') || 'view'; }catch(e){} ui._lastMode = savedMode; setMode(savedMode);
 mat.lawn.color.setHex(SEASON[ui.season].lawn);
 requestAnimationFrame(loop);
 </script>

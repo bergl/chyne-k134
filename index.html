@@ -1295,6 +1295,13 @@ function updateCompass(){
 }
 
 /* ---------- build tab ---------- */
+function focusOn(o){ // bring a newly added item into view, keeping the current viewing angle
+  if (walk.on) setView('aerial');
+  const tgt = V(o.x, levelAt(o.x,o.y), o.y), c = camera===ortho ? ocontrols : controls;
+  if (camera===persp){ c.target.copy(tgt); camera.position.copy(tgt).add(V(-11, 13, 13)); } // elevated view from the garden side, clear of the house
+  else { const delta = tgt.clone().sub(c.target); c.target.add(delta); camera.position.add(delta); if (ortho.zoom < .6){ ortho.zoom = .6; ortho.updateProjectionMatrix(); } }
+  c.update();
+}
 function renderBuild(){
   const el = document.getElementById('tab-build');
   el.innerHTML = `<p>Pick an item to drop it in the middle of the view, then drag it into place. Q / E rotate, Delete removes.</p>` +
@@ -1302,9 +1309,12 @@ function renderBuild(){
   el.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{
     const [cat,i] = b.dataset.add.split('|'); const [n,t,p] = LIBRARY.find(c=>c[0]===cat)[1][+i];
     ndc.set(0,0); ray.setFromCamera(ndc, camera); let gp = groundPoint(state.garden.low) || V(-8,0,5);
-    if (!pip([gp.x,gp.z], PLOT)) gp = V(-9,0,5);
-    const o = {id:uid(), type:t, name:n, state: t==='tree'&&false ? 'existing':'proposed', x:Math.round(gp.x*10)/10, y:Math.round(gp.z*10)/10, rot:0, dz:0, p:JSON.parse(JSON.stringify(p)), note:''};
+    if (!pip([gp.x,gp.z], PLOT) || polyDist(rectFP({x:gp.x,y:gp.z,rot:0}, p.w||p.crown||2, p.d||p.w||p.crown||2), GF_POLY) < .3) gp = V(-9,0,5); // keep new items on the plot and off the house
+    const o = {id:uid(), type:t, name:n, state:'proposed', x:Math.round(gp.x*10)/10, y:Math.round(gp.z*10)/10, rot:0, dz:0, p:JSON.parse(JSON.stringify(p)), note:''};
+    if (ui.layers.proposed===false){ ui.layers.proposed = true; renderLayers(); applyLayers(); }
     state.objects.push(o); rebuildObject(o); if (TYPES[t].hole) buildTerrainAndPlace(); select(o.id); pushHistory();
+    focusOn(o);
+    setStatus(`Added ${n}. Drag it into place, or type its position in the panel.`);
     if (innerWidth<=760) document.getElementById('panel').classList.add('collapsed');
   });
 }

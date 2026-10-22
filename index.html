@@ -94,6 +94,10 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
 .prow{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px;margin:5px 0;font-size:13px}
 .prow .ctl{display:flex;align-items:center;gap:6px}
 .prow input[type=range]{width:110px;accent-color:var(--accent)}
+.swatches{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:4px 0 8px}
+.swatch{display:flex;align-items:center;gap:7px;font-size:12.5px;border:1px solid var(--line);border-radius:var(--r);padding:4px 6px;min-width:0;cursor:pointer}
+.swatch span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.swatch input[type=color]{width:26px;height:22px;padding:0;border:1px solid var(--line);border-radius:4px;background:none;flex:none;cursor:pointer}
 
 #savetoast{position:absolute;right:calc(86px + env(safe-area-inset-right,0px));bottom:calc(22px + env(safe-area-inset-bottom,0px));z-index:7;display:flex;align-items:center;gap:8px;
   background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:6px 13px;font-size:12.5px;max-width:min(360px,calc(100% - 110px));box-shadow:0 2px 10px rgba(0,0,0,.12);backdrop-filter:blur(6px)}
@@ -1244,9 +1248,51 @@ function placeMesh(o){
   if (NO_GRASS.has(o.type)) scheduleGrass();
   reflDirty = true;
 }
+/* ---------- per-object colours: each recolourable part is named by its material ---------- */
+let partNames = null;
+function partName(m){
+  if (!partNames){ partNames = new Map([[mat.timber,'Wood'],[mat.timberDark,'Dark wood'],[mat.alu,'Metal'],[furnCushLight,'Cushions'],[furnCushDark,'Cushions'],[furnPillowGrey,'Pillows'],
+    [saunaClad,'Cladding'],[saunaFrame,'Frames'],[saunaStone,'Stone base'],[saunaWood,'Interior wood'],[saunaHeater,'Heater'],[mat.white,'Coping'],[mat.liner,'Liner'],
+    [barkMat,'Bark'],[birchBarkMat,'Bark'],[mat.trunk,'Trunk'],[mat.birch,'Trunk'],[mat.concrete,'Concrete'],[mat.stone,'Stone'],[mat.soil,'Soil'],[mat.furnDark,'Dark parts'],[mat.furn,'Fabric'],
+    [glassTop,'Table top'],[mat.fence,'Panels'],[mat.roof,'Roof']]); for (const v of Object.values(paveMat)) partNames.set(v,'Surface'); }
+  if (m.userData.part) return m.userData.part;
+  if (m.vertexColors || m.alphaTest>0 || Object.values(foliageMats).includes(m) || Object.values(crownMats).includes(m)) return 'Foliage';
+  return partNames.get(m) || 'Body';
+}
+function colourable(m){ return m.isMesh && m.visible && m.material && !Array.isArray(m.material) && m.material!==mat.glass && m.material!==mat.water && m.material!==mat.pond && m.material!==mat.zone && !m.material.isMeshBasicMaterial; }
+function objectParts(g){ // parts sorted by visible size, largest first
+  const parts = new Map();
+  g.traverse(m=>{ if (!colourable(m)) return; const base = m.userData.origMat || m.material, name = partName(base);
+    m.geometry.computeBoundingBox(); const sz = m.geometry.boundingBox.getSize(V()).multiply(m.scale), a = sz.x*sz.y + sz.y*sz.z + sz.x*sz.z;
+    if (!parts.has(name)) parts.set(name, {name, meshes:[], area:0}); const P = parts.get(name); P.meshes.push(m); P.area += a; });
+  return [...parts.values()].sort((a,b)=>b.area-a.area).slice(0,6);
+}
+function partColour(P){ // current colour for the picker
+  const m = P.meshes[0], ca = m.geometry.attributes.color;
+  if (m.material.vertexColors && ca){ const c = new THREE.Color(0,0,0); const n = Math.min(ca.count, 4000); for (let i=0;i<n;i++){ c.r+=ca.getX(i); c.g+=ca.getY(i); c.b+=ca.getZ(i); } c.multiplyScalar(1/n); return '#'+c.getHexString(); }
+  return '#'+m.material.color.getHexString();
+}
+function applyColors(g, o){
+  if (!o.colors || !Object.keys(o.colors).length) return;
+  for (const P of objectParts(g)){ const hex = o.colors[P.name]; if (!hex) continue; const target = new THREE.Color(hex);
+    for (const m of P.meshes){
+      const ca = m.geometry.attributes.color;
+      if (m.material.vertexColors && ca){ // keep the leaf-to-leaf variation, shift it to the chosen colour
+        if (!m.geometry.userData.orig){ m.geometry.userData.orig = Float32Array.from(ca.array); let l=0; const o2=m.geometry.userData.orig; for (let i=0;i<o2.length;i+=3) l += (o2[i]+o2[i+1]+o2[i+2])/3; m.geometry.userData.avg = l/(o2.length/3)||1; }
+        const o2 = m.geometry.userData.orig, avg = m.geometry.userData.avg;
+        for (let i=0;i<o2.length;i+=3){ const k = ((o2[i]+o2[i+1]+o2[i+2])/3)/avg; ca.array[i]=target.r*k; ca.array[i+1]=target.g*k; ca.array[i+2]=target.b*k; }
+        ca.needsUpdate = true;
+      } else {
+        if (!m.userData.origMat) m.userData.origMat = m.material;
+        g.userData.clones = g.userData.clones || {}; const key = P.name+'|'+m.userData.origMat.uuid;
+        if (!g.userData.clones[key]){ const c = m.userData.origMat.clone(); c.userData = {...m.userData.origMat.userData}; g.userData.clones[key] = c; }
+        const c = g.userData.clones[key]; c.color.copy(target); m.material = c;
+      }
+    } }
+}
 function rebuildObject(o){
   const old = meshById.get(o.id); if (old){ objectsGroup.remove(old); old.traverse(m=>{ if (m.geometry && m.geometry!==sphereGeo) m.geometry.dispose(); }); }
-  const g = buildObject(o); meshById.set(o.id, g); objectsGroup.add(g); placeMesh(o);
+  const g = buildObject(o); applyColors(g, o); meshById.set(o.id, g); objectsGroup.add(g); placeMesh(o);
 }
 function rebuildAll(){
   for (const g of meshById.values()){ objectsGroup.remove(g); }
@@ -1365,10 +1411,21 @@ function renderProps(){
   h += num('rot','Rotation (°)',-180,180,1,o.rot||0);
   h += num('dz','Raise / lower (m)',-2,3,.05,o.dz||0);
   h += `<div class="prow"><label>Position x / y</label><span class="ctl"><input type="number" id="p-x" step="0.05" value="${fmt(o.x)}" aria-label="x"><input type="number" id="p-y" step="0.05" value="${fmt(o.y)}" aria-label="y"></span></div>`;
+  const parts = meshById.get(o.id) ? objectParts(meshById.get(o.id)) : [];
+  if (parts.length){
+    h += `<div class="prow"><label>Colours</label>${o.colors && Object.keys(o.colors).length ? '<button class="btn" id="p-col-reset" style="padding:3px 8px;font-size:12px">Reset colours</button>' : ''}</div><div class="swatches">`;
+    parts.forEach((P,i)=>{ h += `<label class="swatch" for="p-col-${i}"><input type="color" id="p-col-${i}" data-part="${escapeHtml(P.name)}" value="${o.colors?.[P.name] || partColour(P)}"><span>${escapeHtml(P.name)}</span></label>`; });
+    h += `</div>`;
+  }
   if (o.note) h += `<p class="note">${escapeHtml(o.note)}</p>`;
   h += `<div class="btns"><button class="btn" id="p-dup">Duplicate</button><button class="btn danger" id="p-del">Delete</button><button class="btn" id="p-close">Done</button></div>`;
   propsEl.innerHTML = h;
   const commit = ()=>{ placeOrRebuild(o); pushHistory(); };
+  propsEl.querySelectorAll('[data-part]').forEach(inp=>{
+    inp.addEventListener('input', ()=>{ o.colors = {...(o.colors||{}), [inp.dataset.part]: inp.value}; const g = meshById.get(o.id); if (g) applyColors(g, o); });
+    inp.addEventListener('change', ()=>{ pushHistory(); scheduleSave(); if (!propsEl.querySelector('#p-col-reset')) renderProps(); });
+  });
+  propsEl.querySelector('#p-col-reset')?.addEventListener('click', ()=>{ delete o.colors; rebuildObject(o); refreshSelectionBox(); pushHistory(); renderProps(); });
   propsEl.querySelector('#p-name').oninput = e=>{ o.name = e.target.value; scheduleSave(); };
   propsEl.querySelector('#p-name').onchange = ()=>pushHistory();
   propsEl.querySelector('#p-state').onchange = e=>{ o.state=e.target.value; const pill=propsEl.querySelector('#p-state-pill'); pill.textContent=o.state; pill.className='pill '+o.state; commit(); };

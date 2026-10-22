@@ -152,6 +152,7 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
       <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
       <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
       <button id="measure" aria-pressed="false" title="Click two points to measure">Measure</button>
+      <button id="photo" aria-pressed="false" title="Ray-traced still of the current view">Photo</button>
       <button id="toggleTools">Tools</button>
     </div>
   </div>
@@ -194,6 +195,12 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
         <button class="btn" data-sunpreset="355">21 Dec</button>
         <button class="btn" id="s-play">Play day</button>
       </div>
+      <h3>Rendering</h3>
+      <div class="seg" role="group" aria-label="Quality" id="quality">
+        <button data-q="standard">Standard</button><button data-q="high">High</button><button data-q="ultra">Ultra</button>
+      </div>
+      <div class="row"><label for="s-wind">Wind</label><input id="s-wind" type="range" min="0" max="1" step="0.05" value="0.45"><output id="s-wind-o"></output></div>
+      <p class="note">High and Ultra add live reflections in windows and water, ambient occlusion and denser grass. Use Standard on phones. Photo (top bar) ray-traces a still of the current view.</p>
     </div>
     <div class="tabbody" id="tab-designs" hidden>
       <h3>Save this design</h3>
@@ -218,6 +225,9 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
 
   <section id="props" hidden aria-live="polite"></section>
   <div id="roomcard" hidden></div>
+  <div id="photobar" hidden style="position:absolute;left:50%;transform:translateX(-50%);bottom:calc(44px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;z-index:4">
+    <button class="btn primary" id="photo-save">Save image</button><button class="btn" id="photo-exit">Exit photo</button>
+  </div>
   <div id="walkpad" hidden>
     <button class="btn" data-walk="f">▲ Forward</button><button class="btn" data-walk="b">▼ Back</button><button class="btn" id="walkexit">Exit walk</button>
   </div>
@@ -230,11 +240,18 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
 </div>
 
 <script type="importmap">
-{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/","three/examples/jsm/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/","three-mesh-bvh":"https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.6/build/index.module.js","three-gpu-pathtracer":"https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.23/build/index.module.js"}}
 </script>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /* ================= SOURCE DATA (metres, plan frame) =================
    Plan frame: origin = survey point 2 (NW-garden corner of the house),
@@ -416,7 +433,7 @@ const skyCol = new THREE.Color(0xc9dbe6);
 scene.background = skyCol.clone();
 scene.fog = new THREE.Fog(skyCol.clone(), 400, 2200);
 
-const persp = new THREE.PerspectiveCamera(45, 1, 0.1, 4000);
+const persp = new THREE.PerspectiveCamera(45, 1, 0.2, 4000);
 const ortho = new THREE.OrthographicCamera(-30,30,30,-30,0.1,4000);
 ortho.up.set(0,0,-1);
 let camera = persp;
@@ -810,6 +827,7 @@ function buildTerrain(){
       const top = g.h + .05, bot = g.low - .3;
       wallSeg(gardenStruct, P(0), P(len), .26, bot, top, [{s0:sc-sw/2, s1:sc+sw/2, b:bot, t:top}], mat.concrete, 'mid');
       const rise = g.h - g.low, count = Math.max(1, Math.ceil(rise/.165)), r = rise/count, tread=.32;
+      LEVELS.steps = {x:A[0]+u[0]*sc, y:A[1]+u[1]*sc, rad:Math.max(sw/2, count*tread)+.25};
       const ry = Math.atan2(-u[1], u[0]);
       for (let i=0;i<count;i++){
         const h = r*(i+1), off = (count-i-.5)*tread;
@@ -853,35 +871,143 @@ function crownMat(kind){ const col = SEASON[ui.season][kind]; const key=kind+ui.
 const sphereGeo = new THREE.IcosahedronGeometry(1, 1);
 function hashStr(s){ let h=2166136261; for (const ch of s){ h^=ch.charCodeAt(0); h=Math.imul(h,16777619);} return (h>>>0)%2147483646+1; }
 
+/* ---------- procedural trees: branching skeleton + leaf / blossom cards that sway in the wind ---------- */
+const windU = { uTime:{value:0}, uWind:{value:.45} };
+function windify(material, amp, key){
+  material.onBeforeCompile = (sh)=>{
+    sh.uniforms.uTime = windU.uTime; sh.uniforms.uWind = windU.uWind;
+    sh.vertexShader = 'attribute float aTip;\nattribute float aPhase;\nuniform float uTime;\nuniform float uWind;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+      vec4 wpos = modelMatrix * vec4(transformed, 1.0);
+      float gust = 0.55 + 0.45 * sin(uTime * 0.55 + wpos.x * 0.06 + wpos.z * 0.04);
+      float sway = aTip * ${amp.toFixed(3)} * (0.2 + uWind * 1.8) * gust;
+      transformed.x += sway * (sin(uTime * 1.7 + wpos.x * 0.8 + wpos.z * 0.3 + aPhase) + 0.6);
+      transformed.z += sway * 0.55 * cos(uTime * 1.3 + wpos.x * 0.4 + wpos.z * 0.9 + aPhase);
+      transformed.y -= sway * 0.15;`);
+  };
+  material.customProgramCacheKey = ()=>key;
+  return material;
+}
+const leafTexCache = {};
+function leafTexture(kind){
+  if (leafTexCache[kind]) return leafTexCache[kind];
+  const c=document.createElement('canvas'); c.width=c.height=128; const g=c.getContext('2d');
+  let sd=hashStr(kind); const r=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  const leaf=(x,y,a,L,W,col)=>{ g.save(); g.translate(x,y); g.rotate(a); g.fillStyle=col; g.beginPath(); g.moveTo(-L/2,0); g.quadraticCurveTo(0,-W,L/2,0); g.quadraticCurveTo(0,W,-L/2,0); g.fill();
+    g.strokeStyle='rgba(0,0,0,.18)'; g.lineWidth=1; g.beginPath(); g.moveTo(-L/2,0); g.lineTo(L/2,0); g.stroke(); g.restore(); };
+  if (kind==='blossom' || kind==='fruitblossom'){
+    for (let i=0;i<3;i++) leaf(30+r()*70, 30+r()*70, r()*6.3, 26, 9, '#7fa858');
+    for (let i=0;i<10;i++){ const x=16+r()*96, y=16+r()*96, R=8+r()*6;
+      const pc = kind==='blossom' ? `hsl(${336+r()*14},${50+r()*25}%,${80+r()*10}%)` : `hsl(45,${15+r()*20}%,${93+r()*5}%)`;
+      for (let k=0;k<5;k++){ const an=k/5*Math.PI*2+r(); g.fillStyle=pc; g.beginPath(); g.ellipse(x+Math.cos(an)*R*.55, y+Math.sin(an)*R*.55, R*.55, R*.4, an, 0, 7); g.fill(); }
+      g.fillStyle='#e0b04a'; g.beginPath(); g.arc(x,y,R*.2,0,7); g.fill(); }
+  } else if (kind==='needle'){
+    g.strokeStyle='#fff'; g.lineWidth=2.2;
+    for (let i=0;i<34;i++){ const y=8+i*3.4, len=26+r()*22; g.beginPath(); g.moveTo(64,y); g.lineTo(64-len,y+14); g.moveTo(64,y); g.lineTo(64+len,y+14); g.stroke(); }
+    g.lineWidth=3; g.beginPath(); g.moveTo(64,4); g.lineTo(64,124); g.stroke();
+  } else {
+    const n = kind==='olive' ? 12 : 7;
+    for (let i=0;i<n;i++){ const sh=205+r()*50|0; leaf(24+r()*80, 24+r()*80, r()*6.3, kind==='olive'?30:34+r()*12, kind==='olive'?5:13, `rgb(${sh},${sh},${sh})`); }
+  }
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.anisotropy=4; leafTexCache[kind]=t; return t;
+}
+const leafMatCache = {};
+function leafMaterial(texKind){
+  if (leafMatCache[texKind]) return leafMatCache[texKind];
+  const map = leafTexture(texKind);
+  const m = windify(new THREE.MeshStandardMaterial({map, alphaTest:.45, side:THREE.DoubleSide, vertexColors:true, roughness:.75}), texKind==='needle'?.025:.055, 'leaf-'+texKind);
+  m.userData.depth = new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking, map, alphaTest:.45});
+  return leafMatCache[texKind] = m;
+}
+const barkTex = canvasTex(128,(g,s2)=>{ g.fillStyle='#fff'; g.fillRect(0,0,s2,s2); for(let i=0;i<260;i++){ const v=120+rnd()*110|0; g.fillStyle=`rgb(${v},${v},${v})`; g.fillRect(rnd()*s2, rnd()*s2, 1.5+rnd()*2, 6+rnd()*26); } });
+const birchTex = canvasTex(128,(g,s2)=>{ g.fillStyle='#fff'; g.fillRect(0,0,s2,s2); g.fillStyle='#2b2723'; for(let i=0;i<40;i++){ g.fillRect(rnd()*s2, rnd()*s2, 6+rnd()*22, 1.5+rnd()*3); } });
+const barkMat = M({color:0x6a5644, map:barkTex, roughness:.95}), birchBarkMat = M({color:0xefebe4, map:birchTex, roughness:.9});
+const TREE_CFG = {
+  blossom:  {stems:3, lean:.42, len:.36, rad:.055, depth:4, spread:.55, kids:[2,3], up:.28, leafR:.38, card:.42},
+  fruit:    {stems:1, lean:.04, len:.33, rad:.09,  depth:4, spread:.7,  kids:[2,3], up:.18, leafR:.42, card:.4},
+  deciduous:{stems:1, lean:.03, len:.4,  rad:.13,  depth:4, spread:.6,  kids:[2,3], up:.3,  leafR:.5,  card:.46},
+  birch:    {stems:1, lean:.05, len:.55, rad:.1,   depth:4, spread:.45, kids:[2,3], up:.42, leafR:.4,  card:.34},
+  olive:    {stems:2, lean:.38, len:.36, rad:.07,  depth:4, spread:.8,  kids:[2,3], up:.06, leafR:.36, card:.34},
+  shrub:    {stems:6, lean:.55, len:.5,  rad:.02,  depth:2, spread:.6,  kids:[2,3], up:.3,  leafR:.3,  card:.3}
+};
+function leafLook(kind){ // texture + colour for this species and season
+  const se = ui.season;
+  if (kind==='conifer') return {tex:'needle', col:[0x2d4f37,0x3a5f3f]};
+  if (kind==='olive') return {tex:'olive', col:[0x8d9b72,0xa3ad8a]};
+  if (se==='winter') return null;
+  if (se==='spring' && kind==='blossom') return {tex:'blossom', col:[0xffffff,0xf4eef0]};
+  if (se==='spring' && kind==='fruit') return {tex:'fruitblossom', col:[0xffffff,0xf7f4ee]};
+  if (se==='autumn') return {tex:'leaf', col: kind==='birch' ? [0xe8bb3c,0xd7a02c] : kind==='blossom' ? [0xd0532d,0xe2862f] : [0xd88a2c,0xc2602a]};
+  const g = {birch:[0x86b04e,0x9cc260], shrub:[0x5f8f3d,0x77a548]}[kind] || (se==='spring' ? [0x8cc152,0x74ad45] : [0x4f8136,0x5f9440]);
+  return {tex:'leaf', col:g};
+}
 function buildTree(g, o){
-  const p=o.p, k=p.kind, h=p.h, cw=p.crown; let s=hashStr(o.id); const r=()=>{ s=(s*16807)%2147483647; return (s-1)/2147483646; };
+  const p=o.p, k=p.kind, H=Math.max(.4,p.h), CW=Math.max(.3,p.crown);
+  let sd=hashStr(o.id+k); const r=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  const segs=[], tips=[], up=new THREE.Vector3(0,1,0);
   if (k==='conifer'){
-    g.add(box(.18,h*.25,.18,mat.trunk,0,h*.125,0));
-    const c = new THREE.Mesh(new THREE.ConeGeometry(cw/2, h*.85, 10), crownMat(k)); c.position.y = h*.15+h*.425; c.castShadow=true; g.add(c); return;
+    segs.push({a:V(0,0,0), b:V(0,H,0), r0:Math.max(.05,H*.025), r1:.02});
+    for (let y=H*.12; y<H*.97; y+=.32){
+      const t=(y-H*.12)/(H*.85), L=(CW/2)*(1-t)+.18, n=5+Math.floor(r()*3);
+      for (let i=0;i<n;i++){ const an=i/n*Math.PI*2+r()*.8+y*2.1, d=V(Math.cos(an),-.18-r()*.15,Math.sin(an)).normalize();
+        const a0=V(0,y,0), b0=a0.clone().addScaledVector(d,L); segs.push({a:a0,b:b0,r0:.025,r1:.008});
+        for (let s2=.35;s2<=1;s2+=.33) tips.push({p:a0.clone().lerp(b0,s2), d}); }
+    }
+  } else {
+    const c = TREE_CFG[k] || TREE_CFG.deciduous;
+    const grow=(start, dir, len, rad, depth)=>{
+      const end = start.clone().addScaledVector(dir, len);
+      segs.push({a:start, b:end, r0:rad, r1:rad*.7});
+      if (depth>=c.depth){ tips.push({p:end, d:dir}); return; }
+      if (depth>=c.depth-1) tips.push({p:start.clone().lerp(end,.65), d:dir});
+      const n = c.kids[0] + Math.floor(r()*(c.kids[1]-c.kids[0]+1));
+      for (let i=0;i<n;i++){
+        const az=(i/n)*Math.PI*2+r()*1.3, perp=V(Math.cos(az),0,Math.sin(az));
+        perp.addScaledVector(dir, -perp.dot(dir)).normalize();
+        const nd = dir.clone().addScaledVector(perp, Math.tan(c.spread*(.6+r()*.7))).normalize(); nd.y += c.up; nd.normalize();
+        grow(start.clone().lerp(end, i===0 ? 1 : .5+r()*.5), nd, len*(.62+r()*.2), rad*.62, depth+1);
+      }
+    };
+    for (let st=0; st<c.stems; st++){
+      const an=st/c.stems*Math.PI*2+r(), lean=c.lean*(.7+r()*.6);
+      const d=V(Math.sin(lean)*Math.cos(an), Math.cos(lean), Math.sin(lean)*Math.sin(an)).normalize();
+      grow(V((r()-.5)*.08,0,(r()-.5)*.08), d, H*c.len*(c.stems>1?.85+r()*.3:1), c.rad*(c.stems>1?1:1)*Math.max(.6,H/5), 1);
+    }
+    // fit the skeleton to the requested height and crown width
+    let mx=0, my=0; for (const s2 of segs){ for (const q of [s2.a,s2.b]){ mx=Math.max(mx,Math.hypot(q.x,q.z)); my=Math.max(my,q.y); } }
+    const sxz=(CW/2-c.leafR*.6)/Math.max(.05,mx), sy=(H-c.leafR*.7)/Math.max(.05,my);
+    const fit=(q)=>q.set(q.x*sxz, q.y*sy, q.z*sxz);
+    const seen=new Set(); for (const s2 of segs) for (const q of [s2.a,s2.b]) if (!seen.has(q)){ seen.add(q); fit(q); }
+    for (const t of tips) if (!seen.has(t.p)){ seen.add(t.p); fit(t.p); }
   }
-  if (k==='shrub'){
-    for (let i=0;i<5;i++){ const m=new THREE.Mesh(sphereGeo, crownMat(k)); const a=r()*6.28, d=r()*cw*.22; m.position.set(Math.cos(a)*d, h*.5+r()*h*.1, Math.sin(a)*d); m.scale.set(cw*.36,h*.45,cw*.36); m.castShadow=true; g.add(m); }
-    return;
+  // branches
+  const geos=[];
+  for (const s2 of segs){ const dir=s2.b.clone().sub(s2.a), L=dir.length(); if (L<.01 || s2.r0<.004) continue;
+    const cg=new THREE.CylinderGeometry(Math.max(.003,s2.r1), Math.max(.004,s2.r0), L, s2.r0>.04?7:4, 1, true);
+    cg.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(up, dir.normalize())); cg.translate((s2.a.x+s2.b.x)/2,(s2.a.y+s2.b.y)/2,(s2.a.z+s2.b.z)/2); geos.push(cg); }
+  if (geos.length){ const bm=new THREE.Mesh(mergeGeometries(geos), k==='birch'?birchBarkMat:barkMat); bm.castShadow=bm.receiveShadow=true; g.add(bm); geos.forEach(x=>x.dispose()); }
+  // leaves / blossom cards
+  const look = leafLook(k); if (!look || !tips.length) return;
+  const c = TREE_CFG[k] || {leafR:.4, card:.5};
+  const total = Math.round(THREE.MathUtils.clamp(CW*CW*H*(k==='conifer'?9:22)*Q().leaves, 60, 5000));
+  const per = Math.max(1, Math.round(total/tips.length)), card = (k==='conifer'?.55:c.card)*Math.max(.7,Math.min(1.3,CW/4));
+  const pos=[], nor=[], uv=[], col=[], tip=[], ph=[], idx=[];
+  const cA=new THREE.Color(look.col[0]), cB=new THREE.Color(look.col[1]), tmp=new THREE.Color(), centre=V(0,H*.62,0);
+  for (const t of tips) for (let i=0;i<per;i++){
+    const off=V(r()-.5,r()-.5,r()-.5).multiplyScalar(2*(k==='conifer'?.18:c.leafR)), pc=t.p.clone().add(off);
+    const nrm=pc.clone().sub(centre).normalize().lerp(up,.35).normalize();
+    // card plane: random orientation leaning toward vertical so cards never read as edge-on streaks; shading uses nrm
+    const pn=V(r()-.5,(r()-.5)*.6,r()-.5).normalize(), ax=Math.abs(pn.y)>.9?V(1,0,0):V(0,1,0), ay=V().crossVectors(pn,ax).normalize(), bx=V().crossVectors(ay,pn).normalize();
+    const hs=card*(.75+r()*.5)/2, base=pos.length/3, phase=r()*6.28, amp=THREE.MathUtils.clamp(pc.y/H,.25,1);
+    tmp.copy(cA).lerp(cB,r()).multiplyScalar(.82+r()*.3);
+    for (const [u,v] of [[-1,-1],[1,-1],[1,1],[-1,1]]){ const q=pc.clone().addScaledVector(bx,u*hs).addScaledVector(ay,v*hs);
+      pos.push(q.x,q.y,q.z); nor.push(nrm.x,nrm.y,nrm.z); uv.push((u+1)/2,(v+1)/2); col.push(tmp.r,tmp.g,tmp.b); tip.push(amp); ph.push(phase); }
+    idx.push(base,base+1,base+2, base,base+2,base+3);
   }
-  const multi = k==='blossom';
-  const trunkH = multi ? h*.32 : k==='olive' ? h*.4 : h*.45, tr = Math.max(.06, Math.min(.35, h*.02 + cw*.012));
-  for (let st=0; st<(multi?3:1); st++){ // ornamental cherries in the photos are multi-stemmed
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(tr*(multi?.4:.7), tr*(multi?.65:1), trunkH+h*.15, 7), k==='birch'?mat.birch:mat.trunk);
-    const a = st*2.1+r(), lean = multi ? .28 : (r()-.5)*.08;
-    trunk.position.set(multi?Math.cos(a)*trunkH*.2:0, (trunkH+h*.15)/2, multi?Math.sin(a)*trunkH*.2:0);
-    trunk.rotation.set(multi?Math.sin(a)*lean:0, 0, multi?-Math.cos(a)*lean:lean); trunk.castShadow = true; g.add(trunk); }
-  const cm = crownMat(k), winter = SEASON[ui.season][k]===null;
-  if (winter){ // bare branches
-    for (let i=0;i<7;i++){ const b=new THREE.Mesh(new THREE.CylinderGeometry(.02,tr*.45,h*.5,5), mat.trunk); const a=i/7*6.28+r();
-      b.position.set(Math.cos(a)*cw*.14, trunkH+h*.2, Math.sin(a)*cw*.14); b.rotation.set(Math.sin(a)*.6,0,-Math.cos(a)*.6); b.castShadow=true; g.add(b); }
-  }
-  const cy = trunkH + (h-trunkH)/2, ch = h-trunkH, n = k==='birch'?5:multi?14:8;
-  for (let i=0;i<n;i++){
-    const m=new THREE.Mesh(sphereGeo, cm); const a=r()*6.28, d=r()*cw*.24;
-    const sx = cw*(.28+r()*.12)*(k==='birch'?.85:multi?.62:1), sy = ch*(.32+r()*.12)*(multi?.7:1);
-    const dd = multi ? cw*(.12+r()*.26) : d;
-    m.position.set(Math.cos(a)*dd, cy+(r()-.5)*ch*(multi?.6:.3), Math.sin(a)*dd); m.scale.set(sx, sy, sx); m.castShadow=!winter; g.add(m);
-  }
+  const lg=new THREE.BufferGeometry();
+  lg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); lg.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));
+  lg.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2)); lg.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+  lg.setAttribute('aTip',new THREE.Float32BufferAttribute(tip,1)); lg.setAttribute('aPhase',new THREE.Float32BufferAttribute(ph,1)); lg.setIndex(idx);
+  const lm=new THREE.Mesh(lg, leafMaterial(look.tex)); lm.customDepthMaterial = lm.material.userData.depth; lm.castShadow=lm.receiveShadow=true; lm.userData.keepShadow=true; g.add(lm);
 }
 function buildObject(o){
   const g = new THREE.Group(), p = o.p || {};
@@ -957,7 +1083,7 @@ function buildObject(o){
       for (const [x,z] of [[-1,-1],[1,-1],[1,1],[-1,1]]) { const wh=new THREE.Mesh(new THREE.CylinderGeometry(.33,.33,.22,16), mat.furnDark); wh.rotation.z=Math.PI/2; wh.position.set(x*.85,.33,z*1.45); g.add(wh); } break; }
     case 'pillar': g.add(box(p.w,p.h,p.d,M({color:0x9b8c7c}),0,p.h/2,0)); g.add(box(p.w*.6,p.h*.35,.03,mat.white,0,p.h*.6,p.d/2+.01)); break;
   }
-  g.traverse(m=>{ if (m.isMesh){ if (!g.userData.noShadow && m.material!==mat.glass && m.material!==mat.water && m.material!==mat.zone) m.castShadow = m.castShadow!==false; m.receiveShadow = true; m.userData.objId = o.id; } else if (m.isLine) m.userData.objId = o.id; });
+  g.traverse(m=>{ if (m.isMesh){ if (!g.userData.noShadow && m.material!==mat.glass && m.material!==mat.water && m.material!==mat.pond && m.material!==mat.zone) m.castShadow = m.castShadow!==false; m.receiveShadow = true; m.userData.objId = o.id; } else if (m.isLine) m.userData.objId = o.id; });
   g.userData.objId = o.id;
   return g;
 }
@@ -971,6 +1097,8 @@ function placeMesh(o){
   const base = levelAt(o.x, o.y) + (o.dz||0);
   g.position.set(o.x, base, o.y); g.rotation.y = (o.rot||0)*Math.PI/180;
   g.visible = visibleObj(o);
+  if (NO_GRASS.has(o.type)) scheduleGrass();
+  reflDirty = true;
 }
 function rebuildObject(o){
   const old = meshById.get(o.id); if (old){ objectsGroup.remove(old); old.traverse(m=>{ if (m.geometry && m.geometry!==sphereGeo) m.geometry.dispose(); }); }
@@ -979,7 +1107,7 @@ function rebuildObject(o){
 function rebuildAll(){
   for (const g of meshById.values()){ objectsGroup.remove(g); }
   meshById.clear();
-  buildTerrain();
+  buildTerrain(); scheduleGrass();
   for (const o of state.objects) rebuildObject(o);
   refreshSelectionBox();
 }
@@ -1011,7 +1139,9 @@ function updateSun(){
   const day = THREE.MathUtils.clamp(sp.alt/12, 0, 1), dusk = THREE.MathUtils.clamp(sp.alt/4+.25, 0, 1);
   sun.intensity = 2.8*day; sun.visible = sp.alt > -1;
   sun.color.setHSL(.09, .6*(1-day)+.15, .62+.25*day);
-  hemi.intensity = .25 + .95*dusk;
+  hemi.intensity = (.25 + .95*dusk) * .35;
+  envGround.material.color.setRGB(.33,.38,.27).multiplyScalar(.15+.85*dusk);
+  envDirty = true; reflDirty = true;
   const warm = THREE.MathUtils.clamp(1-sp.alt/15, 0, 1), night = THREE.MathUtils.clamp(-sp.alt/8, 0, 1);
   const U = sky.material.uniforms;
   U.top.value.copy(SKY.dayTop).lerp(SKY.setTop, warm).lerp(SKY.nightTop, night);
@@ -1115,7 +1245,7 @@ function renderProps(){
 }
 function updateClearance(){ const o=getObj(ui.selected), el=document.getElementById('p-clear'); if (o && el) el.innerHTML = clearanceHTML(o);
   if (o){ const x=document.getElementById('p-x'), y=document.getElementById('p-y'); if (x && document.activeElement!==x) x.value=fmt(o.x); if (y && document.activeElement!==y) y.value=fmt(o.y); } }
-function buildTerrainAndPlace(){ buildTerrain(); for (const o of state.objects) placeMesh(o); refreshSelectionBox(); }
+function buildTerrainAndPlace(){ buildTerrain(); scheduleGrass(); for (const o of state.objects) placeMesh(o); refreshSelectionBox(); }
 function placeOrRebuild(o, placeOnly=false){
   if (placeOnly && !TYPES[o.type].hole) placeMesh(o); else rebuildObject(o);
   if (TYPES[o.type].hole) buildTerrainAndPlace();
@@ -1245,7 +1375,7 @@ function setView(v){
   if (v==='plan'){ camera = ortho; ortho.position.set(-6,120,6); ocontrols.target.set(-6,0,6); ortho.zoom = 1; ortho.updateProjectionMatrix(); ocontrols.update(); }
   else if (v==='walk'){ camera = persp; walk.pos = V(-9, 0, 4.5); walk.yaw = 0; walk.pitch = 0.02; setStatus('Walk: W A S D or arrow keys to move, drag to look, Esc to leave'); }
   else { camera = persp; const c = VIEWS[v]; persp.position.set(...c.pos); controls.target.set(...c.tgt); controls.update(); setStatus(null); }
-  resize(); setControlsForView();
+  resize(); setControlsForView(); if (typeof buildComposer==='function' && composerReady) buildComposer();
 }
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));
 document.getElementById('walkexit').onclick = ()=>setView('aerial');
@@ -1277,7 +1407,7 @@ const LAYERS = [
   ['proposed','Proposed projects',true],['existing','Existing garden elements',true],['trees','Trees & plants',true],
   ['roof','Roof',true],['furniture','Furniture (illustrative)',true],['rooms','Room labels',true],
   ['dims','Plot & house dimensions',false],['fence','Boundary fence (assumed)',true],['plot','Plot boundary line',true],
-  ['sky','Sky & clouds',true],['pv','PV array (placeholder layout)',false],['snap','Snap moves to 10 cm',true]
+  ['sky','Sky & clouds',true],['grass','Grass blades',true],['pv','PV array (placeholder layout)',false],['snap','Snap moves to 10 cm',true]
 ];
 function renderLayers(){
   const el = document.getElementById('tab-layers');
@@ -1371,7 +1501,7 @@ for (const [k,id,f] of GF_CTL){ const el=document.getElementById(id);
   el.addEventListener('input',()=>{ state.garden[k]=parseFloat(el.value); document.getElementById(id+'-o').textContent=f(el.value); buildTerrainAndPlace(); updateClearance(); scheduleSave(); });
   el.addEventListener('change',()=>pushHistory()); }
 document.querySelectorAll('[data-season]').forEach(b=>b.onclick=()=>{ ui.season=b.dataset.season; document.querySelectorAll('[data-season]').forEach(x=>x.setAttribute('aria-pressed',x===b));
-  mat.lawn.color.setHex(SEASON[ui.season].lawn); for (const o of state.objects) if (o.type==='tree'||o.type==='bed'||o.type==='pond'||(o.type==='wall'&&o.p.mat==='hedge')) rebuildObject(o); refreshSelectionBox(); });
+  mat.lawn.color.setHex(SEASON[ui.season].lawn); for (const o of state.objects) if (o.type==='tree'||o.type==='bed'||o.type==='pond'||(o.type==='wall'&&o.p.mat==='hedge')) rebuildObject(o); refreshSelectionBox(); scheduleGrass(0); });
 
 /* ---------- sun tab ---------- */
 const sDay=document.getElementById('s-day'), sTime=document.getElementById('s-time');
@@ -1502,7 +1632,7 @@ document.getElementById('d-export').onclick = async ()=>{
 };
 document.getElementById('d-import').onchange = async (e)=>{ const f=e.target.files[0]; if (!f) return; try{ const p=JSON.parse(await f.text()); if (!Array.isArray(p.objects)) throw new Error('no objects'); state.garden={...DEFAULT_STATE().garden, ...p.garden}; state.objects=p.objects; rebuildAll(); syncGardenUI(); select(null); pushHistory(); dStatus.textContent=`Imported ${p.objects.length} items.`; }catch(err){ dStatus.textContent='That file is not a garden design export.'; } e.target.value=''; };
 document.getElementById('d-shot').onclick = async ()=>{
-  renderer.render(scene, camera);
+  renderFrame();
   canvas.toBlob(async b=>{ if (!downloads){ fileDownload('chyne-k134-view.png', b); return; } try { await downloads.save({filename:'chyne-k134-view.png', data:b}); } catch(e){ if (e.code!=='declined') dStatus.textContent='Screenshot failed: '+e.message; } }, 'image/png');
 };
 document.getElementById('d-reset').onclick = ()=>{ document.getElementById('d-reset-confirm').hidden=false; };
@@ -1514,11 +1644,194 @@ const barEl = document.querySelector('.bar');
 function syncBar(){ const r = barEl.getBoundingClientRect(); document.documentElement.style.setProperty('--bar-bottom', Math.ceil(r.bottom + 8) + 'px'); }
 new ResizeObserver(syncBar).observe(barEl); addEventListener('resize', syncBar); syncBar();
 
+/* ================= HIGH-FIDELITY RENDERING ================= */
+const QUALITY = {
+  standard:{shadow:2048, ao:false, bloom:false, smaa:false, grass:8,  leaves:.45, reflect:false, tx:false, pr:1.25},
+  high:    {shadow:4096, ao:true,  bloom:false, smaa:true,  grass:20, leaves:.85, reflect:true,  tx:true,  pr:1.5},
+  ultra:   {shadow:4096, ao:true,  bloom:true,  smaa:true,  grass:36, leaves:1.25,reflect:true,  tx:true,  pr:2}
+};
+let qName = (()=>{ try { const q = localStorage.getItem(STORE_KEY+'-quality'); if (QUALITY[q]) return q; } catch(e){}
+  return (matchMedia('(pointer: coarse)').matches || Math.min(innerWidth,innerHeight) < 700) ? 'standard' : 'high'; })();
+function Q(){ return QUALITY[qName]; }
+
+/* image-based lighting from the sky dome (re-baked when the sun moves) */
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envScene = new THREE.Scene();
+const envSkyMat = sky.material.clone(); // dimmer copy of the sky so ambient light doesn't tint everything blue
+envScene.add(new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), envSkyMat));
+const envGround = new THREE.Mesh(new THREE.CircleGeometry(95, 32), new THREE.MeshBasicMaterial({color:0x56603f}));
+envGround.rotation.x = -Math.PI/2; envGround.position.y = -3; envScene.add(envGround);
+let envRT = null, envDirty = true, lastEnv = 0;
+function updateEnv(){ const U=sky.material.uniforms, E=envSkyMat.uniforms;
+  E.top.value.copy(U.top.value).lerp(new THREE.Color(.75,.78,.8), .45).multiplyScalar(.55); E.horizon.value.copy(U.horizon.value).multiplyScalar(.6); E.sunDir.value.copy(U.sunDir.value); E.sunCol.value.copy(U.sunCol.value).multiplyScalar(.6);
+  const old = envRT; envRT = pmrem.fromScene(envScene, 0, .1, 400); if (!photo) scene.environment = envRT.texture; old?.dispose(); envDirty = false; lastEnv = performance.now(); }
+
+/* live reflections of the garden for glass and water */
+const reflectRT = new THREE.WebGLCubeRenderTarget(256, {type:THREE.HalfFloatType});
+const cubeCam = new THREE.CubeCamera(.3, 4000, reflectRT); cubeCam.position.set(-3.5, 1.7, 4.5); scene.add(cubeCam);
+let reflDirty = true, lastRefl = 0;
+function updateReflections(){
+  const hidden=[]; scene.traverse(m=>{ if (m.isMesh && m.visible && m.material && m.material.envMap===reflectRT.texture){ m.visible=false; hidden.push(m); } });
+  const sp = sky.position.clone(), sb = selBox.visible; sky.position.copy(cubeCam.position); selBox.visible=false;
+  cubeCam.update(renderer, scene); reflectRT.texture.needsPMREMUpdate = true;
+  sky.position.copy(sp); selBox.visible=sb; hidden.forEach(m=>m.visible=true); reflDirty=false; lastRefl=performance.now();
+}
+/* procedural ripple normal map (tileable) */
+const waterNormal = (()=>{ const N=256, c=document.createElement('canvas'); c.width=c.height=N; const g=c.getContext('2d'), img=g.createImageData(N,N);
+  const W=[[3,1,.5],[1,4,.42],[5,3,.25],[7,-2,.18],[-4,6,.15],[11,5,.08],[2,-9,.08],[13,-7,.05]];
+  const Hh=(x,y)=>{ let h=0; for (const [a,b,amp] of W) h+=amp*Math.sin(2*Math.PI*(a*x+b*y)/N + a*1.7); return h; };
+  for (let y=0;y<N;y++) for (let x=0;x<N;x++){ const dx=Hh(x+1,y)-Hh(x-1,y), dy=Hh(x,y+1)-Hh(x,y-1); const nx=-dx*3, ny=-dy*3, l=Math.hypot(nx,ny,1), i=(y*N+x)*4;
+    img.data[i]=(nx/l*.5+.5)*255; img.data[i+1]=(ny/l*.5+.5)*255; img.data[i+2]=(1/l*.5+.5)*255; img.data[i+3]=255; }
+  g.putImageData(img,0,0); const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(.5,.5); return t; })();
+function makeGlass(hq){ return hq
+  ? new THREE.MeshPhysicalMaterial({color:0xffffff, metalness:0, roughness:.02, transmission:1, thickness:.02, ior:1.52, attenuationColor:new THREE.Color(0xbcd0d4), attenuationDistance:.8, envMap:reflectRT.texture, envMapIntensity:1.6, side:THREE.DoubleSide})
+  : new THREE.MeshStandardMaterial({color:0x5d7d8f, roughness:.06, metalness:.55, transparent:true, opacity:.45, depthWrite:false}); }
+function makeWater(hq, pond){ const att = pond ? 0x46613d : 0x1aa0c6;
+  return hq
+  ? new THREE.MeshPhysicalMaterial({color:0xffffff, metalness:0, roughness:.015, transmission:1, thickness:1.2, ior:1.333, attenuationColor:new THREE.Color(att), attenuationDistance:pond?.45:1.6, normalMap:waterNormal, normalScale:new THREE.Vector2(.3,.3), envMapIntensity:1.6}) // water reflects the sky (scene environment)
+  : new THREE.MeshStandardMaterial({color:pond?0x3d5c4a:0x2f8fb3, roughness:.04, metalness:.25, transparent:true, opacity:.85, normalMap:waterNormal, normalScale:new THREE.Vector2(.3,.3)}); }
+
+/* wind-blown grass blades on the lawns */
+const NO_GRASS = new Set(['paving','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','steps','bed','wall','firepit','pillar','carport']);
+const grassGroup = new THREE.Group(); scene.add(grassGroup);
+const grassMat = windify(new THREE.MeshStandardMaterial({vertexColors:true, side:THREE.DoubleSide, roughness:.85}), .045, 'grass');
+let grassTimer = null;
+function scheduleGrass(ms=300){ clearTimeout(grassTimer); grassTimer = setTimeout(buildGrass, ms); }
+function buildGrass(){
+  for (const m of [...grassGroup.children]){ grassGroup.remove(m); m.geometry.dispose(); }
+  reflDirty = true;
+  if (ui.layers.grass===false || !LEVELS) return;
+  const q = Q(), sp = 1/Math.sqrt(q.grass);
+  const boxOf = (fp)=>{ let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9; for (const [x,y] of fp){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y); } return {fp,x0,x1,y0,y1}; };
+  const excl = state.objects.filter(o=>NO_GRASS.has(o.type) && visibleObj(o) && !(o.type==='paving' && o.p.mat==='grasspavers')).map(o=>boxOf(footprint(o)));
+  excl.push(boxOf(insetPoly(GF_POLY, -.06)));
+  const L = (state.garden.h>.01 && LEVELS.line) ? LEVELS.line : null;
+  let sd = 1234567; const r=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  const lawn = new THREE.Color(SEASON[ui.season].lawn), tipC = lawn.clone().lerp(new THREE.Color(0xd8e08a), .25);
+  const hMul = ui.season==='winter' ? .6 : ui.season==='autumn' ? .85 : 1;
+  const pos=[], col=[], tip=[], ph=[], idx=[];
+  let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9; for (const [x,y] of PLOT){ minX=Math.min(minX,x); maxX=Math.max(maxX,x); minY=Math.min(minY,y); maxY=Math.max(maxY,y); }
+  for (let gx=minX; gx<maxX; gx+=sp) for (let gy=minY; gy<maxY; gy+=sp){
+    const x=gx+(r()-.5)*sp, y=gy+(r()-.5)*sp;
+    if (!pip([x,y], PLOT)) continue;
+    if (excl.some(e=>x>e.x0 && x<e.x1 && y>e.y0 && y<e.y1 && pip([x,y], e.fp))) continue;
+    if (L && segDist([x,y], L[0], L[1]) < (LEVELS.steps && Math.hypot(x-LEVELS.steps.x, y-LEVELS.steps.y) < LEVELS.steps.rad ? LEVELS.steps.rad : .32)) continue;
+    const base = levelAt(x,y) + .003, phase = r()*6.28;
+    for (let b=0;b<4;b++){
+      const an=r()*6.28, off=r()*.045, bx=x+Math.cos(an)*off, bz=y+Math.sin(an)*off;
+      const h=(.06+r()*.1)*hMul, w=.006+r()*.004, fa=r()*6.28, px=Math.cos(fa)*w, pz=Math.sin(fa)*w;
+      const la=r()*6.28, lean=.015+r()*.04, lx=Math.cos(la)*lean, lz=Math.sin(la)*lean, i0=pos.length/3;
+      pos.push(bx-px,base,bz-pz, bx+px,base,bz+pz, bx-px*.6+lx*.4,base+h*.5,bz-pz*.6+lz*.4, bx+px*.6+lx*.4,base+h*.5,bz+pz*.6+lz*.4, bx+lx,base+h,bz+lz);
+      const sh=.75+r()*.35;
+      for (const [t,cc] of [[0,lawn],[0,lawn],[.45,lawn],[.45,lawn],[1,tipC]]){ const m = t===0 ? .5 : t<1 ? .85 : 1.05; col.push(cc.r*m*sh, cc.g*m*sh, cc.b*m*sh); tip.push(t); ph.push(phase); }
+      idx.push(i0,i0+1,i0+2, i0+1,i0+3,i0+2, i0+2,i0+3,i0+4);
+    }
+  }
+  if (!pos.length) return;
+  const g = new THREE.BufferGeometry(), n = pos.length/3, nor = new Float32Array(n*3); for (let i=0;i<n;i++) nor[i*3+1]=1;
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('normal', new THREE.BufferAttribute(nor,3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col,3)); g.setAttribute('aTip', new THREE.Float32BufferAttribute(tip,1)); g.setAttribute('aPhase', new THREE.Float32BufferAttribute(ph,1));
+  g.setIndex(n>65535 ? new THREE.Uint32BufferAttribute(idx,1) : new THREE.Uint16BufferAttribute(idx,1));
+  const m = new THREE.Mesh(g, grassMat); m.receiveShadow = true; m.castShadow = false; grassGroup.add(m);
+}
+
+/* post-processing: ambient occlusion, bloom, anti-aliasing */
+let composer = null, composerReady = false;
+function buildComposer(){
+  if (composer){ for (const p of composer.passes) p.dispose?.(); composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); composer = null; }
+  const q = Q(); composerReady = true;
+  if (!q.ao && !q.bloom && !q.smaa) return;
+  const w = innerWidth, h = innerHeight;
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  if (q.ao){
+    const ao = new GTAOPass(scene, camera, w, h); ao.blendIntensity = .9;
+    ao.updateGtaoMaterial({radius:.45, distanceExponent:1.4, thickness:1.2, scale:1, samples:12, distanceFallOff:1, screenSpaceRadius:false});
+    const base = ao.render.bind(ao);
+    ao.render = (...args)=>{ // leave out the sky, clouds and cut-out foliage, which the AO pass would draw as solid quads
+      const v=[sky.visible, clouds.visible, grassGroup.visible]; sky.visible=clouds.visible=grassGroup.visible=false;
+      const leaves=[]; objectsGroup.traverse(m=>{ if (m.isMesh && m.visible && m.material.alphaTest>0){ m.visible=false; leaves.push(m); } });
+      base(...args); leaves.forEach(m=>m.visible=true); [sky.visible, clouds.visible, grassGroup.visible]=v; };
+    composer.addPass(ao);
+  }
+  if (q.bloom) composer.addPass(new UnrealBloomPass(new THREE.Vector2(w,h), .14, .35, .95));
+  composer.addPass(new OutputPass());
+  if (q.smaa){ const pr=renderer.getPixelRatio(); composer.addPass(new SMAAPass(w*pr, h*pr)); }
+  composer.setSize(w, h);
+}
+function applyQuality(){
+  const q = Q();
+  renderer.setPixelRatio(Math.min(devicePixelRatio, q.pr));
+  sun.shadow.mapSize.set(q.shadow, q.shadow); if (sun.shadow.map){ sun.shadow.map.dispose(); sun.shadow.map = null; }
+  const swap = new Map([[mat.glass, makeGlass(q.tx)], [mat.water, makeWater(q.tx,false)], [mat.pond, makeWater(q.tx,true)]]);
+  scene.traverse(m=>{ if (m.isMesh && swap.has(m.material)) m.material = swap.get(m.material); });
+  for (const old of swap.keys()) old.dispose();
+  [mat.glass, mat.water, mat.pond] = [...swap.values()];
+  if (!q.reflect) for (const m of [mat.glass, mat.water, mat.pond]){ m.envMap = null; m.needsUpdate = true; }
+  for (const o of state.objects) if (o.type==='tree') rebuildObject(o);
+  resize(); buildComposer(); scheduleGrass(0); reflDirty = true;
+  document.querySelectorAll('[data-q]').forEach(b=>b.setAttribute('aria-pressed', b.dataset.q===qName));
+}
+document.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{ qName=b.dataset.q; try{ localStorage.setItem(STORE_KEY+'-quality', qName); }catch(e){} applyQuality(); });
+const windEl = document.getElementById('s-wind'), windOut = document.getElementById('s-wind-o');
+function syncWind(){ const v=+windEl.value; windU.uWind.value=v; windOut.textContent = v<.1?'Calm':v<.35?'Light air':v<.6?'Breeze':v<.85?'Windy':'Strong'; }
+windEl.oninput = ()=>{ syncWind(); try{ localStorage.setItem(STORE_KEY+'-wind', windEl.value); }catch(e){} };
+try{ const w=localStorage.getItem(STORE_KEY+'-wind'); if (w!==null) windEl.value=w; }catch(e){} syncWind();
+
+/* ray-traced photo mode (progressive path tracing of the current view) */
+let photo = null, photoStatusT = 0;
+const photoBtn = document.getElementById('photo'), photoBar = document.getElementById('photobar');
+async function startPhoto(){
+  if (photo){ stopPhoto(); return; }
+  if (camera!==persp){ setStatus('Photo works in the 3D views. Switch to Aerial, Garden, Street or Walk first.'); return; }
+  photoBtn.setAttribute('aria-pressed','true'); setStatus('Loading the ray tracer…');
+  // the path tracer reads Scene.backgroundRotation / environmentRotation, which arrived in three r162
+  if (!THREE.Scene.prototype.backgroundRotation){ THREE.Scene.prototype.backgroundRotation = new THREE.Euler(); THREE.Scene.prototype.environmentRotation = new THREE.Euler(); }
+  let PT; try { PT = await import('three-gpu-pathtracer'); } catch(e){ photoBtn.setAttribute('aria-pressed','false'); setStatus('The ray tracer could not load: '+e.message); return; }
+  setStatus('Preparing the scene for ray tracing…'); await new Promise(r=>setTimeout(r,40));
+  const hidden = [sky, clouds, selBox, plotLineGroup, measureGroup].filter(o=>o.visible); hidden.forEach(o=>o.visible=false);
+  const env = new PT.GradientEquirectTexture(512);
+  env.topColor.copy(sky.material.uniforms.top.value); env.bottomColor.copy(sky.material.uniforms.horizon.value).multiplyScalar(.6); env.exponent = 1.3; env.update();
+  const prev = {env:scene.environment, bg:scene.background, fog:scene.fog};
+  scene.environment = env; scene.background = env; scene.fog = null;
+  try {
+    const pt = new PT.WebGLPathTracer(renderer);
+    pt.minSamples = 1; pt.fadeDuration = 250; pt.renderScale = Math.min(1, 1.25/renderer.getPixelRatio()); pt.tiles.set(2,2);
+    if ('filterGlossyFactor' in pt) pt.filterGlossyFactor = .5;
+    pt.setScene(scene, persp);
+    photo = {pt, env, hidden, prev};
+  } catch(e){
+    scene.environment = prev.env; scene.background = prev.bg; scene.fog = prev.fog; hidden.forEach(o=>o.visible=true); env.dispose();
+    console.error(e); photoBtn.setAttribute('aria-pressed','false'); setStatus('Ray tracing is not supported here: '+e.message); return;
+  }
+  controls.enabled = false; labelsEl.hidden = true; photoBar.hidden = false; document.getElementById('walkpad').hidden = true;
+}
+function stopPhoto(){
+  if (!photo) return;
+  try { photo.pt.dispose(); } catch(e){}
+  photo.env.dispose(); photo.hidden.forEach(o=>o.visible=true);
+  scene.environment = envRT ? envRT.texture : null; scene.background = photo.prev.bg; scene.fog = photo.prev.fog;
+  photo = null; labelsEl.hidden = false; photoBar.hidden = true; photoBtn.setAttribute('aria-pressed','false');
+  if (walk.on) document.getElementById('walkpad').hidden = false;
+  setControlsForView(); setStatus(null); envDirty = true;
+}
+photoBtn.onclick = startPhoto;
+document.getElementById('photo-exit').onclick = stopPhoto;
+document.getElementById('photo-save').onclick = ()=>document.getElementById('d-shot').click();
+canvas.addEventListener('pointerdown', ()=>{ if (photo) stopPhoto(); }, true);
+canvas.addEventListener('wheel', ()=>{ if (photo) stopPhoto(); }, {capture:true, passive:true});
+
+function renderFrame(){
+  if (photo){ photo.pt.renderSample(); return; }
+  if (composer) composer.render(); else renderer.render(scene, camera);
+}
+
 /* ================= LOOP ================= */
 function resize(){
   const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false);
   persp.aspect = w/h; persp.updateProjectionMatrix();
   const s = 17; ortho.left=-s*w/h; ortho.right=s*w/h; ortho.top=s; ortho.bottom=-s; ortho.updateProjectionMatrix();
+  composer?.setSize(w, h);
 }
 addEventListener('resize', resize);
 let last = performance.now();
@@ -1529,11 +1842,16 @@ function loop(now){
   for (const c of clouds.children){ c.position.x += c.userData.speed*dt; if (c.position.x > 1800) c.position.x -= 3600; }
   if (camera===persp && !walk.on) controls.update(); if (camera===ortho) ocontrols.update();
   updateWalk(dt);
-  renderer.render(scene, camera);
+  windU.uTime.value = now/1000;
+  waterNormal.offset.set(now*1.2e-5, now*0.8e-5);
+  if (envDirty && now-lastEnv > 250) updateEnv();
+  if (!photo && Q().reflect && reflDirty && now-lastRefl > 600) updateReflections();
+  renderFrame();
+  if (photo && now-photoStatusT > 300){ photoStatusT = now; setStatus(`Ray-traced photo · ${Math.floor(photo.pt.samples)} samples · the image sharpens over time · click the view to leave`); }
   updateLabels(); updateCompass();
   requestAnimationFrame(loop);
 }
-renderBuild(); renderLayers(); syncGardenUI(); applyLayers(); rebuildAll(); updateSun(); setView('aerial'); pushHistory();
+renderBuild(); renderLayers(); syncGardenUI(); applyLayers(); rebuildAll(); updateSun(); setView('aerial'); applyQuality(); pushHistory();
 let savedMode='view'; try{ savedMode = localStorage.getItem(STORE_KEY+'-mode') || 'view'; }catch(e){} ui._lastMode = savedMode; setMode(savedMode);
 mat.lawn.color.setHex(SEASON[ui.season].lawn);
 requestAnimationFrame(loop);

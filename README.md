@@ -13,6 +13,6 @@ Interactive 3D model of house K-134 (Premonstrátů 1000, Chýně) and its garde
 - **Lighting:** image-based lighting from the sky, with ambient occlusion (GTAO) on High and Ultra.
 - **Glass and water:** windows reflect the garden live; glass and water are refractive.
 - **Plants:** procedural trees and grass that sway in a wind you can adjust.
-- **Photo mode:** progressive path tracing of the current view with three-gpu-pathtracer.
+- **Photo mode:** progressive accumulation of jittered frames (anti-aliasing and soft sun shadows); experimental path tracing with three-gpu-pathtracer.
 
 The app is a single static `index.html` and uses Three.js 0.160, three-mesh-bvh 0.7.6 and three-gpu-pathtracer 0.0.23 from jsDelivr. To run it locally, open the file in a browser or serve the folder with any static server.

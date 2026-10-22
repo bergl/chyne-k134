@@ -1023,7 +1023,7 @@ function setMode(m){
   const bt = document.querySelector('[data-tab=build]'); bt.hidden = !ui.edit;
   if (!ui.edit && bt.getAttribute('aria-selected')==='true') document.querySelector('[data-tab=layers]').click();
   if (ui.edit && m!==ui._lastMode) bt.click();
-  document.querySelectorAll('#tab-garden input[type=range], #d-save, #d-reset, #d-import, label[for=d-import]').forEach(el=>{ el.toggleAttribute('disabled', !ui.edit); if (el.tagName==='LABEL') el.hidden = !ui.edit; });
+  document.querySelectorAll('#tab-garden input[type=range], #d-reset, #d-import, label[for=d-import]').forEach(el=>{ el.toggleAttribute('disabled', !ui.edit); if (el.tagName==='LABEL') el.hidden = !ui.edit; });
   document.getElementById('d-reset').hidden = !ui.edit;
   if (!ui.edit){ select(null); if (drag){ drag=null; setControlsForView(); } }
   setStatus(null); ui._lastMode = m;
@@ -1355,26 +1355,50 @@ document.getElementById('tab-about').innerHTML = `
   <h3>Plan coordinates</h3>
   <p>Origin is the house corner by the living-room glazing on the north-west side. x runs along the north-west facade toward the street; y runs toward the south-east. Values in the editor are in metres in this frame.</p>`;
 
-/* ---------- designs (cloud + files) ---------- */
-let db = null, downloads = null, unsubDesigns = null;
+/* ---------- designs: saved to the page on claude.ai, otherwise in this browser ---------- */
+let db = null, downloads = null, dbDocs = [], dbReady = false;
 const dStatus = document.getElementById('d-status'), dList = document.getElementById('d-list');
+const LOCAL_DESIGNS = STORE_KEY + '-designs';
+function localDesigns(){ try { return JSON.parse(localStorage.getItem(LOCAL_DESIGNS) || '{}'); } catch(e){ return {}; } }
+function writeLocalDesigns(m){ localStorage.setItem(LOCAL_DESIGNS, JSON.stringify(m)); }
+function designId(name){ return (name.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40)) || uid(); }
+function renderDesigns(){
+  const rows = [
+    ...dbDocs.map(d=>({...d, where:'page'})),
+    ...Object.entries(localDesigns()).map(([id,v])=>({id, ...v, where:'browser'}))
+  ].sort((x,y)=>(y.updatedAt||0)-(x.updatedAt||0));
+  if (!rows.length){ dList.innerHTML = '<p>No saved designs yet. Name your design above and press Save.</p>'; return; }
+  dList.innerHTML = rows.map(v=>{ const n=(v.data?.objects||[]).filter(o=>o.state==='proposed').length;
+    return `<div class="design"><div><b>${escapeHtml(v.name||'Untitled')}</b><small>${new Date(v.updatedAt||0).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'})} · ${n} proposed · ${v.where==='page'?'saved to page':'this browser'}</small></div><button class="btn" data-load="${v.where}|${v.id}">Open</button><button class="btn danger" data-del="${v.where}|${v.id}" aria-label="Delete">✕</button></div>`; }).join('');
+  dList.querySelectorAll('[data-load]').forEach(btn=>btn.onclick=()=>{ const [w,id]=btn.dataset.load.split('|'); const v = rows.find(r=>r.where===w && r.id===id);
+    if (v?.data){ state.garden={...DEFAULT_STATE().garden, ...v.data.garden}; state.objects=v.data.objects; rebuildAll(); syncGardenUI(); select(null); pushHistory(); document.getElementById('d-name').value=v.name||''; dStatus.textContent=`Opened “${v.name}”.`; } });
+  dList.querySelectorAll('[data-del]').forEach(btn=>btn.onclick=async ()=>{
+    if (!btn.dataset.armed){ btn.dataset.armed='1'; btn.textContent='Delete?'; setTimeout(()=>{ btn.textContent='✕'; delete btn.dataset.armed; }, 3000); return; }
+    const [w,id]=btn.dataset.del.split('|');
+    try { if (w==='page') await db.doc('designs/'+id).delete(); else { const m=localDesigns(); delete m[id]; writeLocalDesigns(m); renderDesigns(); } dStatus.textContent='Design deleted.'; }
+    catch(e){ dStatus.textContent='Could not delete: '+(e.message||e.code); } });
+}
+renderDesigns();
 (async ()=>{
   try { db = await window.claude?.use?.('db'); } catch(e){ db = null; }
   try { downloads = await window.claude?.use?.('downloads'); } catch(e){ downloads = null; }
-  if (!db){ dList.innerHTML = '<p>Saving to the page is not available in this view. Use Export JSON to keep a copy.</p>'; document.getElementById('d-save').disabled = true; return; }
-  unsubDesigns = db.collection('designs').orderBy('updatedAt','desc').limit(50).onSnapshot(snap=>{
-    if (snap.empty){ dList.innerHTML = '<p>No saved designs yet. Name your design above and press Save.</p>'; return; }
-    dList.innerHTML = snap.docs.map(d=>{ const v=d.data()||{}; const n=(v.data?.objects||[]).filter(o=>o.state==='proposed').length;
-      return `<div class="design"><div><b>${escapeHtml(v.name||'Untitled')}</b><small>${new Date(v.updatedAt||0).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'})} · ${n} proposed</small></div><button class="btn" data-load="${d.id}">Open</button><button class="btn danger" data-del="${d.id}" aria-label="Delete">✕</button></div>`; }).join('');
-    dList.querySelectorAll('[data-load]').forEach(b=>b.onclick=()=>{ const d=snap.docs.find(x=>x.id===b.dataset.load).data(); if (d?.data){ state.garden=d.data.garden; state.objects=d.data.objects; rebuildAll(); syncGardenUI(); select(null); pushHistory(); document.getElementById('d-name').value=d.name||''; dStatus.textContent=`Opened “${d.name}”.`; } });
-    dList.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ if (b.dataset.armed){ db.doc('designs/'+b.dataset.del).delete().catch(e=>dStatus.textContent='Could not delete: '+e.message); } else { b.dataset.armed='1'; b.textContent='Delete?'; setTimeout(()=>{ b.textContent='✕'; delete b.dataset.armed; }, 3000); } });
-  }, err=>{ dList.innerHTML = `<p>Saved designs could not be loaded (${escapeHtml(err.message||err.code)}).</p>`; });
+  dbReady = true;
+  if (!db){ dStatus.textContent = 'Designs you save are kept in this browser. Use Export JSON to move one to another device.'; return; }
+  db.collection('designs').orderBy('updatedAt','desc').limit(50).onSnapshot(snap=>{
+    dbDocs = snap.docs.map(d=>({id:d.id, ...(d.data()||{})})); renderDesigns();
+  }, err=>{ dStatus.textContent = `Saved designs on the page could not be loaded (${err.message||err.code}).`; });
 })();
 document.getElementById('d-save').onclick = async ()=>{
-  const name = document.getElementById('d-name').value.trim() || 'Design ' + new Date().toLocaleDateString('en-GB');
-  try { const id = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,40) || uid();
-    await db.doc('designs/'+id).set({name, updatedAt: Date.now(), data:{garden:state.garden, objects:state.objects}}); dStatus.textContent = `Saved “${name}”. Anyone you share this page with can open it.`; }
-  catch(e){ dStatus.textContent = 'Could not save: ' + (e.message||e.code) + '. Use Export JSON instead.'; }
+  const name = document.getElementById('d-name').value.trim() || 'Design ' + new Date().toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'});
+  const id = designId(name), doc = {name, updatedAt: Date.now(), data:{garden:state.garden, objects:state.objects}};
+  dStatus.textContent = 'Saving…';
+  if (db){
+    try { await db.doc('designs/'+id).set(doc); dStatus.textContent = `Saved “${name}” to the page. It opens on any device where you open this page.`; return; }
+    catch(e){ dStatus.textContent = `Saving to the page failed (${e.message||e.code}); saving in this browser instead.`; }
+  }
+  try { const m = localDesigns(); m[id] = doc; writeLocalDesigns(m); renderDesigns();
+    if (!db) dStatus.textContent = `Saved “${name}” in this browser. Use Export JSON to open it on another device.`; }
+  catch(e){ dStatus.textContent = 'This browser blocks storage (private window?). Use Export JSON to keep a copy.'; }
 };
 document.getElementById('d-export').onclick = async ()=>{
   const json = JSON.stringify({v:1, garden:state.garden, objects:state.objects}, null, 1);

@@ -878,7 +878,7 @@ function windify(material, amp, key){
     sh.uniforms.uTime = windU.uTime; sh.uniforms.uWind = windU.uWind;
     sh.vertexShader = 'attribute float aTip;\nattribute float aPhase;\nuniform float uTime;\nuniform float uWind;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
       vec4 wpos = modelMatrix * vec4(transformed, 1.0);
-      float gust = 0.55 + 0.45 * sin(uTime * 0.55 + wpos.x * 0.06 + wpos.z * 0.04);
+      float gust = 0.5 + 0.3 * sin(uTime * 0.9 - wpos.x * 0.32 - wpos.z * 0.12) + 0.2 * sin(uTime * 0.37 + wpos.z * 0.05); // gusts travel across the garden
       float sway = aTip * ${amp.toFixed(3)} * (0.2 + uWind * 1.8) * gust;
       transformed.x += sway * (sin(uTime * 1.7 + wpos.x * 0.8 + wpos.z * 0.3 + aPhase) + 0.6);
       transformed.z += sway * 0.55 * cos(uTime * 1.3 + wpos.x * 0.4 + wpos.z * 0.9 + aPhase);
@@ -1294,6 +1294,7 @@ canvas.addEventListener('pointerdown', e=>{
   }
 });
 canvas.addEventListener('pointermove', e=>{
+  trackPointerForDog(e);
   if (walk.on && walk.look){ walk.yaw = walk.look.yaw - (e.clientX-walk.look.x)*.005; walk.pitch = THREE.MathUtils.clamp(walk.look.pitch - (e.clientY-walk.look.y)*.004, -1.2, 1.2); return; }
   if (!drag) return;
   setNDC(e); const gp = groundPoint(drag.base); if (!gp) return;
@@ -1312,7 +1313,7 @@ canvas.addEventListener('pointerup', e=>{
   setNDC(e);
   if (ui.measuring){ measureClick(); return; }
   const hit = pickObject();
-  if (!ui.edit){ hit ? showObjectInfo(getObj(hit.id)) : showRoomInfo(); return; }
+  if (!ui.edit){ if (dogClick()) return; if (hit){ showObjectInfo(getObj(hit.id)); return; } if (!showRoomInfo() ) throwBall(); return; }
   if (!hit){ select(null); showRoomInfo(); }
 });
 addEventListener('keydown', e=>{
@@ -1335,8 +1336,9 @@ function showRoomInfo(){
   const hit = ray.intersectObjects([...vis, ...G.uf.children, ...G.gf.children, ...G.roof.children].filter(m=>isVisibleChain(m)), false)[0];
   if (hit && hit.object.userData.room){ const r=hit.object.userData.room;
     roomCard.innerHTML = `<b>${r.id} ${r.cz}</b> · ${r.en} · <span class="mono">${r.a.toFixed(2)} m²</span> <span class="mono" style="color:var(--muted)">(${r.f? '2.NP +3.150':'1.NP ±0.000'})</span>`;
-    roomCard.hidden = false; clearTimeout(roomCard._t); roomCard._t = setTimeout(()=>roomCard.hidden=true, 5000);
+    roomCard.hidden = false; clearTimeout(roomCard._t); roomCard._t = setTimeout(()=>roomCard.hidden=true, 5000); return true;
   } else roomCard.hidden = true;
+  return false;
 }
 
 /* ---------- measure ---------- */
@@ -1407,7 +1409,7 @@ const LAYERS = [
   ['proposed','Proposed projects',true],['existing','Existing garden elements',true],['trees','Trees & plants',true],
   ['roof','Roof',true],['furniture','Furniture (illustrative)',true],['rooms','Room labels',true],
   ['dims','Plot & house dimensions',false],['fence','Boundary fence (assumed)',true],['plot','Plot boundary line',true],
-  ['sky','Sky & clouds',true],['grass','Grass blades',true],['pv','PV array (placeholder layout)',false],['snap','Snap moves to 10 cm',true]
+  ['sky','Sky & clouds',true],['grass','Grass blades',true],['dog','Dog',true],['pv','PV array (placeholder layout)',false],['snap','Snap moves to 10 cm',true]
 ];
 function renderLayers(){
   const el = document.getElementById('tab-layers');
@@ -1441,6 +1443,7 @@ function updateLabels(){
   }
   if (ui.layers.dims) items.push(...dimsLabels());
   for (const m of measureLabels) items.push({...m, cls:'meas'});
+  if (dog.bubble && performance.now() < dog.bubbleUntil && dogGroup.visible) items.push({pos:dogGroup.position.clone().add(V(0,1.15,0)), text:dog.bubble, cls:'obj'});
   const sel = getObj(ui.selected);
   if (drag && sel){ items.push({pos:V(sel.x, levelAt(sel.x,sel.y)+2.2, sel.y), text:`x ${sel.x.toFixed(1)}  y ${sel.y.toFixed(1)}`, cls:'obj'}); }
   const r = canvas.getBoundingClientRect();
@@ -1514,7 +1517,7 @@ let playing=false; document.getElementById('s-play').onclick=(e)=>{ playing=!pla
 document.querySelectorAll('[role=tab]').forEach(t=>t.onclick=()=>{ document.querySelectorAll('[role=tab]').forEach(x=>{ x.setAttribute('aria-selected', x===t); document.getElementById('tab-'+x.dataset.tab).hidden = x!==t; }); });
 document.getElementById('toggleTools').onclick=()=>document.getElementById('panel').classList.toggle('collapsed');
 if (innerWidth<=760) document.getElementById('panel').classList.add('collapsed');
-function setStatus(t){ document.getElementById('status').textContent = t || (ui.edit ? 'Edit mode · drag objects to move them · Q / E rotate · Delete removes' : 'View mode · drag to orbit · scroll or pinch to zoom · click anything for details'); }
+function setStatus(t){ document.getElementById('status').textContent = t || (ui.edit ? 'Edit mode · drag objects to move them · Q / E rotate · Delete removes' : 'View mode · drag to orbit · click the lawn to throw a ball for the dog · click anything for details'); }
 
 /* ---------- data tab ---------- */
 document.getElementById('tab-about').innerHTML = `
@@ -1646,9 +1649,9 @@ new ResizeObserver(syncBar).observe(barEl); addEventListener('resize', syncBar);
 
 /* ================= HIGH-FIDELITY RENDERING ================= */
 const QUALITY = {
-  standard:{shadow:2048, ao:false, bloom:false, smaa:false, grass:8,  leaves:.45, reflect:false, tx:false, pr:1.25},
-  high:    {shadow:4096, ao:true,  bloom:false, smaa:true,  grass:20, leaves:.85, reflect:true,  tx:true,  pr:1.5},
-  ultra:   {shadow:4096, ao:true,  bloom:true,  smaa:true,  grass:36, leaves:1.25,reflect:true,  tx:true,  pr:2}
+  standard:{shadow:2048, ao:false, bloom:false, smaa:false, grass:16, leaves:.45, reflect:false, tx:false, pr:1.25},
+  high:    {shadow:4096, ao:true,  bloom:false, smaa:true,  grass:34, leaves:.85, reflect:true,  tx:true,  pr:1.5},
+  ultra:   {shadow:4096, ao:true,  bloom:true,  smaa:true,  grass:52, leaves:1.25,reflect:true,  tx:true,  pr:2}
 };
 let qName = (()=>{ try { const q = localStorage.getItem(STORE_KEY+'-quality'); if (QUALITY[q]) return q; } catch(e){}
   return (matchMedia('(pointer: coarse)').matches || Math.min(innerWidth,innerHeight) < 700) ? 'standard' : 'high'; })();
@@ -1700,6 +1703,7 @@ function scheduleGrass(ms=300){ clearTimeout(grassTimer); grassTimer = setTimeou
 function buildGrass(){
   for (const m of [...grassGroup.children]){ grassGroup.remove(m); m.geometry.dispose(); }
   reflDirty = true;
+  mat.lawn.color.setHex(SEASON[ui.season].lawn);
   if (ui.layers.grass===false || !LEVELS) return;
   const q = Q(), sp = 1/Math.sqrt(q.grass);
   const boxOf = (fp)=>{ let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9; for (const [x,y] of fp){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y); } return {fp,x0,x1,y0,y1}; };
@@ -1707,29 +1711,41 @@ function buildGrass(){
   excl.push(boxOf(insetPoly(GF_POLY, -.06)));
   const L = (state.garden.h>.01 && LEVELS.line) ? LEVELS.line : null;
   let sd = 1234567; const r=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
-  const lawn = new THREE.Color(SEASON[ui.season].lawn), tipC = lawn.clone().lerp(new THREE.Color(0xd8e08a), .25);
+  // colour ramp: dark base, mid green, sunlit yellow-green tips; a few dry blades; soft mowing patches
+  const lawn = new THREE.Color(SEASON[ui.season].lawn);
+  const cBase = lawn.clone().multiplyScalar(.32), cMid = lawn.clone().multiplyScalar(.78), cTip = lawn.clone().lerp(new THREE.Color(0xdde58e), .32), cDry = new THREE.Color(0xb3a35f);
   const hMul = ui.season==='winter' ? .6 : ui.season==='autumn' ? .85 : 1;
-  const pos=[], col=[], tip=[], ph=[], idx=[];
+  const patch = (x,y)=>THREE.MathUtils.clamp(.5 + .22*Math.sin(x*.33+1.3)*Math.sin(y*.29+.7) + .14*Math.sin(x*1.07+y*.83) + .08*Math.sin(x*2.3-y*1.7), 0, 1);
+  const pos=[], nor=[], col=[], tip=[], ph=[], idx=[], tmp=new THREE.Color();
+  const F=[0,.36,.7,1], WF=[1,.82,.5];
   let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9; for (const [x,y] of PLOT){ minX=Math.min(minX,x); maxX=Math.max(maxX,x); minY=Math.min(minY,y); maxY=Math.max(maxY,y); }
   for (let gx=minX; gx<maxX; gx+=sp) for (let gy=minY; gy<maxY; gy+=sp){
     const x=gx+(r()-.5)*sp, y=gy+(r()-.5)*sp;
     if (!pip([x,y], PLOT)) continue;
     if (excl.some(e=>x>e.x0 && x<e.x1 && y>e.y0 && y<e.y1 && pip([x,y], e.fp))) continue;
     if (L && segDist([x,y], L[0], L[1]) < (LEVELS.steps && Math.hypot(x-LEVELS.steps.x, y-LEVELS.steps.y) < LEVELS.steps.rad ? LEVELS.steps.rad : .32)) continue;
-    const base = levelAt(x,y) + .003, phase = r()*6.28;
-    for (let b=0;b<4;b++){
-      const an=r()*6.28, off=r()*.045, bx=x+Math.cos(an)*off, bz=y+Math.sin(an)*off;
-      const h=(.06+r()*.1)*hMul, w=.006+r()*.004, fa=r()*6.28, px=Math.cos(fa)*w, pz=Math.sin(fa)*w;
-      const la=r()*6.28, lean=.015+r()*.04, lx=Math.cos(la)*lean, lz=Math.sin(la)*lean, i0=pos.length/3;
-      pos.push(bx-px,base,bz-pz, bx+px,base,bz+pz, bx-px*.6+lx*.4,base+h*.5,bz-pz*.6+lz*.4, bx+px*.6+lx*.4,base+h*.5,bz+pz*.6+lz*.4, bx+lx,base+h,bz+lz);
-      const sh=.75+r()*.35;
-      for (const [t,cc] of [[0,lawn],[0,lawn],[.45,lawn],[.45,lawn],[1,tipC]]){ const m = t===0 ? .5 : t<1 ? .85 : 1.05; col.push(cc.r*m*sh, cc.g*m*sh, cc.b*m*sh); tip.push(t); ph.push(phase); }
-      idx.push(i0,i0+1,i0+2, i0+1,i0+3,i0+2, i0+2,i0+3,i0+4);
+    const base = levelAt(x,y) + .002, pn = patch(x,y);
+    for (let b=0;b<3;b++){
+      const an=r()*6.28, off=r()*.035, bx=x+Math.cos(an)*off, bz=y+Math.sin(an)*off;
+      const h=(.045+r()*.07)*hMul*(.8+.4*pn), w=.0032+r()*.0026, fa=r()*6.28, px=Math.cos(fa)*w, pz=Math.sin(fa)*w;
+      const la=fa+Math.PI/2+(r()-.5)*1.2, lean=h*(.25+r()*.55), lx=Math.cos(la)*lean, lz=Math.sin(la)*lean;
+      const side = r()<.5?-1:1, fn=[-Math.sin(fa)*side, 0, Math.cos(fa)*side], nx=fn[0]*.45, nz=fn[2]*.45, nl=Math.hypot(nx,.8,nz);
+      const dry = r()<.05, shade=(.86+r()*.28)*(.82+.36*pn), phase=r()*6.28, i0=pos.length/3;
+      for (let k=0;k<4;k++){
+        const f=F[k], bend=Math.pow(f,1.7), cx=bx+lx*bend, cy=base+h*f, cz=bz+lz*bend;
+        const verts = k<3 ? [[cx-px*WF[k],cy,cz-pz*WF[k]],[cx+px*WF[k],cy,cz+pz*WF[k]]] : [[cx,cy,cz]];
+        if (f<.5) tmp.copy(cBase).lerp(cMid, f/.5); else tmp.copy(cMid).lerp(cTip, (f-.5)/.5);
+        if (dry) tmp.lerp(cDry, .55+.3*f);
+        for (const v of verts){ pos.push(v[0],v[1],v[2]); nor.push(nx/nl,.8/nl,nz/nl); col.push(tmp.r*shade,tmp.g*shade,tmp.b*shade); tip.push(Math.pow(f,1.4)); ph.push(phase); }
+      }
+      idx.push(i0,i0+1,i0+2, i0+1,i0+3,i0+2, i0+2,i0+3,i0+4, i0+3,i0+5,i0+4, i0+4,i0+5,i0+6);
     }
   }
+  // darken the lawn texture under the blades so gaps read as shaded ground
+  mat.lawn.color.copy(lawn).multiplyScalar(.6);
   if (!pos.length) return;
-  const g = new THREE.BufferGeometry(), n = pos.length/3, nor = new Float32Array(n*3); for (let i=0;i<n;i++) nor[i*3+1]=1;
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('normal', new THREE.BufferAttribute(nor,3));
+  const g = new THREE.BufferGeometry(), n = pos.length/3;
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor,3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col,3)); g.setAttribute('aTip', new THREE.Float32BufferAttribute(tip,1)); g.setAttribute('aPhase', new THREE.Float32BufferAttribute(ph,1));
   g.setIndex(n>65535 ? new THREE.Uint32BufferAttribute(idx,1) : new THREE.Uint16BufferAttribute(idx,1));
   const m = new THREE.Mesh(g, grassMat); m.receiveShadow = true; m.castShadow = false; grassGroup.add(m);
@@ -1821,6 +1837,171 @@ document.getElementById('photo-save').onclick = ()=>document.getElementById('d-s
 canvas.addEventListener('pointerdown', ()=>{ if (photo) stopPhoto(); }, true);
 canvas.addEventListener('wheel', ()=>{ if (photo) stopPhoto(); }, {capture:true, passive:true});
 
+/* ================= DOG: a cream golden retriever that roams the garden ================= */
+const dogGroup = new THREE.Group(); scene.add(dogGroup);
+const fur = new THREE.MeshPhysicalMaterial({color:0xf2e2c4, roughness:.92, sheen:1, sheenRoughness:.55, sheenColor:new THREE.Color(0xfff3dc)});
+const furDark = new THREE.MeshPhysicalMaterial({color:0xe6cda0, roughness:.95, sheen:1, sheenRoughness:.6, sheenColor:new THREE.Color(0xfff0d0)});
+const dogBlack = new THREE.MeshStandardMaterial({color:0x151210, roughness:.35});
+const DP = {}; // named parts
+// fine fur strands as a bump map
+const furBump = canvasTex(256,(g,s2)=>{ g.fillStyle='#808080'; g.fillRect(0,0,s2,s2); for (let i=0;i<5000;i++){ const x=rnd()*s2, y=rnd()*s2, l=4+rnd()*9, v=90+rnd()*120|0; g.strokeStyle=`rgb(${v},${v},${v})`; g.lineWidth=1; g.beginPath(); g.moveTo(x,y); g.lineTo(x+(rnd()-.5)*3, y+l); g.stroke(); } });
+furBump.repeat.set(3,3); fur.bumpMap = furBump; fur.bumpScale = 1.2; furDark.bumpMap = furBump; furDark.bumpScale = 1.2;
+(function buildDog(){
+  const caps=(r,l,m)=>new THREE.Mesh(new THREE.CapsuleGeometry(r,l,6,14), m);
+  const sph=(r,m)=>new THREE.Mesh(new THREE.SphereGeometry(r,20,14), m);
+  const root = new THREE.Group(); dogGroup.add(root); DP.root = root;        // root pitches/bobs; forward is +x
+  const body = caps(.19,.36,fur); body.rotation.z=Math.PI/2; body.position.set(-.02,.53,0); body.scale.set(1,1,.95); root.add(body);
+  const chest = sph(.225,fur); chest.position.set(.2,.5,0); chest.scale.set(1,1.08,.92); root.add(chest);
+  const belly = sph(.17,furDark); belly.position.set(.04,.4,0); belly.scale.set(1.5,.55,.85); root.add(belly);      // feathered underline
+  const ruff = sph(.17,furDark); ruff.position.set(.32,.5,0); ruff.scale.set(.75,1.15,.95); root.add(ruff);
+  const hips = sph(.2,fur); hips.position.set(-.25,.54,0); hips.scale.set(1,.95,.95); root.add(hips);
+  const neck = new THREE.Group(); neck.position.set(.34,.62,0); root.add(neck); DP.neck = neck;
+  const neckM = caps(.11,.15,fur); neckM.rotation.z=-.75; neckM.position.set(.06,.08,0); neck.add(neckM);
+  const head = new THREE.Group(); head.position.set(.14,.2,0); neck.add(head); DP.head = head;
+  const skull = sph(.125,fur); skull.scale.set(1.08,.95,.95); head.add(skull);
+  const brow = sph(.07,fur); brow.position.set(.08,.04,0); brow.scale.set(.8,.7,1.4); head.add(brow);
+  const snout = caps(.066,.11,fur); snout.rotation.z=Math.PI/2; snout.position.set(.16,-.04,0); snout.scale.set(.95,1,1.05); head.add(snout);
+  const jowl = sph(.06,fur); jowl.position.set(.15,-.085,0); jowl.scale.set(1.5,.6,1.15); head.add(jowl);
+  const nose = sph(.032,dogBlack); nose.position.set(.27,-.025,0); nose.scale.set(.9,.85,1.15); head.add(nose);
+  const mouth = new THREE.Group(); mouth.position.set(.23,-.1,0); head.add(mouth); DP.mouth = mouth;
+  for (const z of [-.065,.065]){ const eye=sph(.019,dogBlack); eye.position.set(.095,.035,z); head.add(eye); }
+  DP.ears=[];
+  for (const z of [-1,1]){ const ear=new THREE.Group(); ear.position.set(.01,.05,z*.105); head.add(ear);
+    const e=sph(.12,furDark); e.scale.set(.42,1,.2); e.position.set(.015,-.11,z*.01); ear.add(e); ear.rotation.x = -z*.08; DP.ears.push(ear); }
+  DP.legs=[];
+  for (const [x,z,front] of [[.24,.105,1],[.24,-.105,1],[-.27,.11,0],[-.27,-.11,0]]){
+    const hip=new THREE.Group(); hip.position.set(x,.46,z); root.add(hip);
+    if (front){ const up=caps(.062,.15,fur); up.position.y=-.1; hip.add(up); const feather=sph(.06,furDark); feather.scale.set(.6,1.5,.7); feather.position.set(-.05,-.13,0); hip.add(feather); }
+    else { const thigh=sph(.11,fur); thigh.scale.set(1.05,1.45,.75); thigh.position.set(-.01,-.07,z>0?.01:-.01); hip.add(thigh); const tf=sph(.07,furDark); tf.scale.set(.7,1.3,.7); tf.position.set(-.08,-.12,0); hip.add(tf); }
+    const knee=new THREE.Group(); knee.position.y=-.22; hip.add(knee);
+    const low=caps(.044,.15,fur); low.position.y=-.1; knee.add(low);
+    const paw=sph(.056,fur); paw.scale.set(1.35,.62,1.05); paw.position.set(.025,-.215,0); knee.add(paw);
+    DP.legs.push({hip, knee, front, z});
+  }
+  const tail=new THREE.Group(); tail.position.set(-.43,.6,0); root.add(tail); DP.tail=tail;
+  let parent=tail; DP.tailSegs=[];
+  for (let i=0;i<7;i++){ const seg=new THREE.Group(); seg.position.x = i===0?0:-.07; parent.add(seg);
+    const m=caps(.04+.012*Math.sin(i/6*Math.PI),.045,fur); m.rotation.z=Math.PI/2; m.position.x=-.04; seg.add(m);
+    if (i>0){ const plume=sph(.042+.02*Math.sin(i/6*Math.PI),furDark); plume.scale.set(1.9,.95,.4); plume.position.set(-.035,-.038,0); seg.add(plume); } // feathering under the tail
+    seg.rotation.z = -.2; DP.tailSegs.push(seg); parent=seg; }
+  dogGroup.traverse(m=>{ if (m.isMesh){ m.castShadow=true; m.receiveShadow=true; m.userData.dog=true; } });
+})();
+const ball = new THREE.Mesh(new THREE.SphereGeometry(.034,16,12), new THREE.MeshStandardMaterial({color:0xd4e34a, roughness:.7}));
+ball.castShadow = true; ball.visible = false; scene.add(ball);
+const dog = {x:-6.5, y:3.2, yaw:Math.PI, h:0, speed:0, phase:0, state:'wander', target:null, timer:2, wag:.3, look:null, sit:0, sniff:0, hop:0, bubble:'', bubbleUntil:0, carrying:false};
+const pointer = {x:0, y:0, t:-1e9, vx:0, vy:0};
+const ballSt = {flying:false, t:0, dur:1, a:null, b:null, onGround:false};
+const DOG_BLOCK = new Set(['pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','wall','bed','steps','pillar','carport']);
+function dogFree(x,y){
+  if (!pip([x,y], PLOT)) return false;
+  if (pip([x,y], insetPoly(GF_POLY,-.35))) return false;
+  for (const o of state.objects){ if (!DOG_BLOCK.has(o.type) || !visibleObj(o)) continue; if (Math.hypot(o.x-x,o.y-y) > 9) continue; if (pip([x,y], footprint(o))) return false; }
+  return true;
+}
+function randomSpot(){ for (let i=0;i<60;i++){ const p=[-24+Math.random()*44, -2+Math.random()*16]; if (dogFree(p[0],p[1]) && levelAt(p[0],p[1])>-.19) return p; } return [-6,4]; }
+function trackPointerForDog(e){
+  if (!dogGroup.visible || drag) return;
+  setNDC(e); const hit = ray.intersectObjects(terrainGroup.children, false)[0]; if (!hit) return;
+  const now=performance.now(), dt=Math.max(16, now-pointer.t);
+  pointer.vx = (hit.point.x-pointer.x)/dt*1000; pointer.vy = (hit.point.z-pointer.y)/dt*1000;
+  pointer.x = hit.point.x; pointer.y = hit.point.z; pointer.t = now;
+}
+let audioCtx = null;
+function bark(){
+  dog.bubble = Math.random()<.5 ? 'Woof!' : 'Woof woof!'; dog.bubbleUntil = performance.now()+1300;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const n = dog.bubble.length>6 ? 2 : 1;
+    for (let i=0;i<n;i++){ const t0 = audioCtx.currentTime + i*.22;
+      const o=audioCtx.createOscillator(), f=audioCtx.createBiquadFilter(), g=audioCtx.createGain();
+      o.type='sawtooth'; o.frequency.setValueAtTime(420,t0); o.frequency.exponentialRampToValueAtTime(170,t0+.13);
+      f.type='lowpass'; f.frequency.value=900; g.gain.setValueAtTime(.0001,t0); g.gain.exponentialRampToValueAtTime(.35,t0+.015); g.gain.exponentialRampToValueAtTime(.0001,t0+.16);
+      o.connect(f); f.connect(g); g.connect(audioCtx.destination); o.start(t0); o.stop(t0+.18); }
+  } catch(e){}
+}
+function dogClick(){ // returns true when the click landed on the dog
+  if (!dogGroup.visible) return false;
+  if (!ray.intersectObject(dogGroup, true).length) return false;
+  bark(); dog.hop = 1; dog.state='play'; dog.timer=3; dog.wag=1; return true;
+}
+function throwBall(){
+  if (!dogGroup.visible) return;
+  const hit = ray.intersectObjects(terrainGroup.children, false)[0]; if (!hit || !pip([hit.point.x,hit.point.z], PLOT)) return;
+  const a = camera.position.clone().add(ray.ray.direction.clone().multiplyScalar(1.2)); a.y -= .4;
+  ballSt.a = a; ballSt.b = hit.point.clone(); ballSt.b.y = levelAt(hit.point.x, hit.point.z)+.034;
+  ballSt.dur = THREE.MathUtils.clamp(a.distanceTo(ballSt.b)/14, .45, 1.6); ballSt.t = 0; ballSt.flying = true; ballSt.onGround=false;
+  ball.visible = true; dog.carrying = false; dog.state = 'fetch'; dog.wag = 1; dog.sit = 0;
+  if (Math.random()<.4) bark();
+}
+function turnToward(yawT, rate, dt){ let d = yawT - dog.yaw; while (d>Math.PI) d-=2*Math.PI; while (d<-Math.PI) d+=2*Math.PI; dog.yaw += THREE.MathUtils.clamp(d, -rate*dt, rate*dt); return Math.abs(d); }
+function updateDog(dt, now){
+  dogGroup.visible = ui.layers.dog!==false;
+  if (!dogGroup.visible){ ball.visible=false; return; }
+  // ball physics
+  if (ballSt.flying){ ballSt.t += dt/ballSt.dur; const t=Math.min(1,ballSt.t);
+    ball.position.lerpVectors(ballSt.a, ballSt.b, t); ball.position.y += Math.sin(t*Math.PI)*Math.max(1, ballSt.a.distanceTo(ballSt.b)*.22);
+    if (t>=1){ ballSt.flying=false; ballSt.onGround=true; } }
+  const pointerFresh = now-pointer.t < 2500, pd = Math.hypot(pointer.x-dog.x, pointer.y-dog.y);
+  let goal=null, speedT=0;
+  if (dog.state==='fetch'){
+    if (dog.carrying){ goal=[pointerFresh?pointer.x:-2.8, pointerFresh?pointer.y:4.2]; speedT=3.2;
+      if (Math.hypot(goal[0]-dog.x, goal[1]-dog.y) < 1.1){ dog.carrying=false; ballSt.onGround=true; ball.position.set(dog.x+Math.cos(dog.yaw)*.45, levelAt(dog.x,dog.y)+.034, dog.y-Math.sin(dog.yaw)*.45); dog.state='play'; dog.timer=4; bark(); } }
+    else { const bx=ball.position.x, bz=ball.position.z; goal=[bx,bz]; speedT=ballSt.flying?4.2:4.6;
+      if (!ballSt.flying && Math.hypot(bx-dog.x,bz-dog.y) < .45){ dog.carrying = true; } }
+  } else if (pointerFresh && pd < 11 && dogFree(pointer.x, pointer.y)){
+    // come to the cursor and stop a little short of it
+    const d = Math.max(.001,pd), stop=.95; dog.look=[pointer.x,pointer.y]; dog.wag = Math.min(1, dog.wag+dt*2); dog.sit=0;
+    if (pd > stop+.25){ goal=[pointer.x-(pointer.x-dog.x)/d*stop, pointer.y-(pointer.y-dog.y)/d*stop]; speedT = pd>3.5 ? 4 : 1.6; dog.state='follow'; }
+    else { dog.state='play'; if (Math.hypot(pointer.vx,pointer.vy) > 6 && dog.hop<=0) dog.hop=1; }
+  } else {
+    if (dog.state==='follow' || dog.state==='play'){ dog.state='wander'; dog.target=null; dog.timer=1+Math.random()*2; }
+    dog.look=null; dog.wag = Math.max(.25, dog.wag-dt*.3);
+    if (dog.state==='wander'){
+      if (!dog.target){ dog.timer-=dt; if (dog.timer<=0) dog.target=randomSpot(); }
+      else { goal=dog.target; speedT=1.05;
+        if (Math.hypot(goal[0]-dog.x, goal[1]-dog.y) < .3){ dog.target=null; const r=Math.random(); dog.state = r<.45?'sniff':r<.75?'sit':'wander'; dog.timer = dog.state==='sit'?4+Math.random()*5:2+Math.random()*3; } }
+    } else { dog.timer-=dt; if (dog.timer<=0){ dog.state='wander'; dog.timer=.5; } }
+  }
+  // locomotion
+  if (goal){ const dx=goal[0]-dog.x, dy=goal[1]-dog.y, dist=Math.hypot(dx,dy);
+    const err = turnToward(Math.atan2(-dy,dx), speedT>3?5.5:3.2, dt);
+    speedT *= THREE.MathUtils.clamp(1.3-err, .15, 1) * THREE.MathUtils.clamp(dist/.5, .2, 1);
+  } else if (dog.look){ turnToward(Math.atan2(-(dog.look[1]-dog.y), dog.look[0]-dog.x), 3, dt); speedT = 0; }
+  dog.speed += (speedT - dog.speed) * Math.min(1, dt*3.5);
+  const nx = dog.x + Math.cos(dog.yaw)*dog.speed*dt, ny = dog.y - Math.sin(dog.yaw)*dog.speed*dt;
+  if (dogFree(nx,ny)){ dog.x=nx; dog.y=ny; } else { dog.speed*=.3; if (dog.state==='wander') dog.target=randomSpot(); }
+  const ground = levelAt(dog.x,dog.y); dog.h += (ground - dog.h) * Math.min(1, dt*(ground>dog.h?9:6));
+  // animation
+  const run = dog.speed>2.6, gaitF = run ? 2.6 : 2.1;
+  dog.phase += dt * (dog.speed*gaitF + (dog.speed>.05?1.5:0));
+  const amp = THREE.MathUtils.clamp(dog.speed/1.2, 0, 1) * (run ? .75 : .5);
+  dog.sit += ((dog.state==='sit'?1:0) - dog.sit) * Math.min(1, dt*3);
+  dog.sniff += ((dog.state==='sniff'?1:0) - dog.sniff) * Math.min(1, dt*3);
+  if (dog.hop>0) dog.hop = Math.max(0, dog.hop - dt*2.2);
+  const hopY = Math.sin((1-dog.hop)*Math.PI) * (dog.hop>0 ? .22 : 0);
+  for (const L of DP.legs){
+    const ph = run ? dog.phase + (L.front?0:Math.PI*.9) + (L.z>0?.35:0) : dog.phase + ((L.front ^ (L.z>0)) ? 0 : Math.PI);
+    L.hip.rotation.z = Math.sin(ph)*amp;
+    L.knee.rotation.z = -Math.max(0, Math.cos(ph))*amp*(L.front?-.9:1.1);
+    if (!L.front){ L.hip.rotation.z -= dog.sit*1.15; L.knee.rotation.z += dog.sit*2.0; }
+    else { L.hip.rotation.z -= dog.sit*.25; }
+  }
+  const bob = Math.abs(Math.sin(dog.phase)) * amp * .05;
+  DP.root.position.y = bob + hopY - dog.sit*.13;
+  DP.root.rotation.z = (run ? Math.sin(dog.phase)*.06 : 0) + dog.sit*.42 - dog.sniff*.05;
+  DP.neck.rotation.z = -dog.sniff*.85 + dog.sit*.15 + (run? -.15:0);
+  DP.head.rotation.z = -dog.sniff*.3 + Math.sin(now/700)*.04;
+  // look at cursor: yaw of the head relative to the body
+  if (dog.look){ let d=Math.atan2(-(dog.look[1]-dog.y), dog.look[0]-dog.x)-dog.yaw; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; DP.neck.rotation.y += (THREE.MathUtils.clamp(d,-.9,.9)-DP.neck.rotation.y)*Math.min(1,dt*6); }
+  else DP.neck.rotation.y *= Math.max(0, 1-dt*3);
+  const wagRate = 6 + dog.wag*12, wagAmp = .25 + dog.wag*.55;
+  DP.tail.rotation.y = Math.sin(now/1000*wagRate)*wagAmp; DP.tail.rotation.z = .35 + dog.wag*.25 - dog.sit*.6;
+  for (const [i,seg] of DP.tailSegs.entries()) seg.rotation.y = Math.sin(now/1000*wagRate - i*.6)*.12*dog.wag;
+  for (const [i,e] of DP.ears.entries()) e.rotation.z = Math.sin(dog.phase*2+i)*.12*amp + (run?.35:0);
+  dogGroup.position.set(dog.x, dog.h, dog.y); dogGroup.rotation.y = dog.yaw;
+  if (dog.carrying){ DP.mouth.updateWorldMatrix(true,false); ball.position.setFromMatrixPosition(DP.mouth.matrixWorld); ball.visible=true; }
+}
+
 function renderFrame(){
   if (photo){ photo.pt.renderSample(); return; }
   if (composer) composer.render(); else renderer.render(scene, camera);
@@ -1842,6 +2023,7 @@ function loop(now){
   for (const c of clouds.children){ c.position.x += c.userData.speed*dt; if (c.position.x > 1800) c.position.x -= 3600; }
   if (camera===persp && !walk.on) controls.update(); if (camera===ortho) ocontrols.update();
   updateWalk(dt);
+  if (!photo) updateDog(dt, now);
   windU.uTime.value = now/1000;
   waterNormal.offset.set(now*1.2e-5, now*0.8e-5);
   if (envDirty && now-lastEnv > 250) updateEnv();

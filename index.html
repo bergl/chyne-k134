@@ -48,7 +48,7 @@ button{cursor:pointer}
 .seg button:disabled{opacity:.4;cursor:default}
 .seg .lbl{padding:7px 8px 7px 10px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;align-self:center}
 
-#panel{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:calc(70px + env(safe-area-inset-top,0px));bottom:calc(44px + env(safe-area-inset-bottom,0px));width:300px;
+#panel{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:var(--bar-bottom,calc(70px + env(safe-area-inset-top,0px)));bottom:calc(44px + env(safe-area-inset-bottom,0px));width:300px;
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;backdrop-filter:blur(8px);z-index:4}
 .tabs{display:flex;border-bottom:1px solid var(--line);overflow-x:auto}
 .tabs button{flex:1;border:0;background:transparent;padding:9px 6px;font-family:var(--f-display);font-size:15px;letter-spacing:.03em;color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap}
@@ -83,7 +83,7 @@ table.facts td:last-child{text-align:right;font-family:var(--f-mono);font-size:1
 input[type=text],input[type=number],select{background:transparent;border:1px solid var(--line);border-radius:4px;padding:5px 7px;min-width:0}
 input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
 
-#props{position:absolute;right:max(12px,env(safe-area-inset-right,0px));top:calc(70px + env(safe-area-inset-top,0px));width:290px;max-height:calc(100% - 130px);overflow-y:auto;
+#props{position:absolute;right:max(12px,env(safe-area-inset-right,0px));top:var(--bar-bottom,calc(70px + env(safe-area-inset-top,0px)));width:290px;max-height:calc(100% - var(--bar-bottom,70px) - 60px);overflow-y:auto;
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;backdrop-filter:blur(8px);z-index:4}
 #props header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 #props header input{flex:1;min-width:0;font-family:var(--f-display);font-size:18px;font-weight:600;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:2px 0}
@@ -104,7 +104,7 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
 .lab.dim{background:rgba(29,43,38,.78);color:#fff}
 .lab.meas{background:#c26a2e;color:#fff;font-weight:500}
 .lab.obj{background:rgba(194,106,46,.9);color:#fff}
-#roomcard{position:absolute;z-index:4;left:50%;transform:translateX(-50%);top:calc(70px + env(safe-area-inset-top,0px));background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px 12px;font-size:13px;max-width:calc(100% - 32px)}
+#roomcard{position:absolute;z-index:4;left:50%;transform:translateX(-50%);top:var(--bar-bottom,calc(70px + env(safe-area-inset-top,0px)));background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px 12px;font-size:13px;max-width:calc(100% - 32px)}
 #roomcard b{font-family:var(--f-display);font-size:17px}
 #walkpad{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(44px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;z-index:4}
 #toggleTools{display:none}
@@ -118,7 +118,7 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
   #panel.collapsed{display:none}
   #props{left:max(8px,env(safe-area-inset-left,0px));right:max(8px,env(safe-area-inset-right,0px));width:auto;top:auto;bottom:calc(8px + env(safe-area-inset-bottom,0px));max-height:52%;z-index:6}
   #status{display:none}
-  #compass{bottom:auto;top:calc(110px + env(safe-area-inset-top,0px));width:48px;height:48px}
+  #compass{bottom:auto;top:var(--bar-bottom,calc(110px + env(safe-area-inset-top,0px)));width:48px;height:48px}
 }
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
@@ -1424,6 +1424,11 @@ document.getElementById('d-shot').onclick = async ()=>{
 document.getElementById('d-reset').onclick = ()=>{ document.getElementById('d-reset-confirm').hidden=false; };
 document.getElementById('d-reset-no').onclick = ()=>{ document.getElementById('d-reset-confirm').hidden=true; };
 document.getElementById('d-reset-yes').onclick = ()=>{ state = DEFAULT_STATE(); rebuildAll(); syncGardenUI(); select(null); pushHistory(); document.getElementById('d-reset-confirm').hidden=true; dStatus.textContent='Starting garden restored.'; };
+
+/* keep panels below the toolbar however many rows it wraps to */
+const barEl = document.querySelector('.bar');
+function syncBar(){ const r = barEl.getBoundingClientRect(); document.documentElement.style.setProperty('--bar-bottom', Math.ceil(r.bottom + 8) + 'px'); }
+new ResizeObserver(syncBar).observe(barEl); addEventListener('resize', syncBar); syncBar();
 
 /* ================= LOOP ================= */
 function resize(){

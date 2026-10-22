@@ -95,6 +95,13 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
 .prow .ctl{display:flex;align-items:center;gap:6px}
 .prow input[type=range]{width:110px;accent-color:var(--accent)}
 
+#savetoast{position:absolute;right:calc(86px + env(safe-area-inset-right,0px));bottom:calc(22px + env(safe-area-inset-bottom,0px));z-index:7;display:flex;align-items:center;gap:8px;
+  background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:6px 13px;font-size:12.5px;max-width:min(360px,calc(100% - 110px));box-shadow:0 2px 10px rgba(0,0,0,.12);backdrop-filter:blur(6px)}
+#savetoast.ok{color:var(--accent)} #savetoast.err{color:var(--warn);border-color:var(--warn)}
+#savetoast .spin{width:11px;height:11px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){#savetoast .spin{animation:none}}
+@media (max-width:760px){#savetoast{right:auto;left:max(12px,env(safe-area-inset-left,0px));bottom:auto;top:var(--bar-bottom,120px)}}
 #status{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(10px + env(safe-area-inset-bottom,0px));background:var(--panel);border:1px solid var(--line);border-radius:99px;
   padding:5px 14px;font-size:12.5px;color:var(--muted);white-space:nowrap;max-width:calc(100% - 32px);overflow:hidden;text-overflow:ellipsis;z-index:3}
 #compass{position:absolute;right:max(14px,env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));width:62px;height:62px;z-index:3;pointer-events:none}
@@ -208,6 +215,7 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
       <div class="row"><label for="d-target" style="flex:0 0 auto">Save to</label><select id="d-target" style="flex:1"><option value="new">New design</option></select></div>
       <div class="row"><input type="text" id="d-name" placeholder="e.g. Sauna by the upper lawn" style="flex:1" aria-label="Design name"><button class="btn primary" id="d-save">Save</button></div>
       <p id="d-status" class="note">Your changes are also kept automatically in this browser.</p>
+      <label class="check"><input type="checkbox" id="d-auto" checked> Autosave changes to the last used design</label>
       <h3>Saved designs</h3>
       <div class="designs" id="d-list"><p>Saved designs will appear here.</p></div>
       <h3>Files</h3>
@@ -226,6 +234,7 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
 
   <section id="props" hidden aria-live="polite"></section>
   <div id="roomcard" hidden></div>
+  <div id="savetoast" hidden role="status" aria-live="polite"></div>
   <div id="photobar" hidden style="position:absolute;left:50%;transform:translateX(-50%);bottom:calc(44px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;z-index:4">
     <button class="btn primary" id="photo-save">Save image</button><button class="btn" id="photo-pt" title="Experimental: physically based path tracing, slow and grainy at first">Path trace (beta)</button><button class="btn" id="photo-exit">Exit photo</button>
   </div>
@@ -1401,7 +1410,9 @@ function updateUndo(){ document.getElementById('undo').disabled = hIndex<=0; doc
 document.getElementById('undo').onclick = ()=>{ if (hIndex>0){ hIndex--; restore(history[hIndex]); updateUndo(); } };
 document.getElementById('redo').onclick = ()=>{ if (hIndex<history.length-1){ hIndex++; restore(history[hIndex]); updateUndo(); } };
 let saveT=null;
-function scheduleSave(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){} }, 400); }
+function scheduleSave(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){} }, 400);
+  try { scheduleAutosave(); } catch(e){} // not yet defined during start-up
+}
 
 /* ---------- pointer interaction ---------- */
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -1763,20 +1774,46 @@ document.getElementById('d-save').onclick = async ()=>{
     saveLocal(id); if (!db) dStatus.textContent = `${verb} “${name}” in this browser. Use Export JSON to open it on another device.`;
   } catch(e){ dStatus.textContent = 'This browser blocks storage (private window?). Use Export JSON to keep a copy.'; }
 };
+/* ---------- autosave to the last used design ---------- */
+const autoEl = document.getElementById('d-auto'), toastEl = document.getElementById('savetoast');
+try { autoEl.checked = localStorage.getItem(STORE_KEY+'-autosave') !== 'off'; } catch(e){}
+autoEl.onchange = ()=>{ try{ localStorage.setItem(STORE_KEY+'-autosave', autoEl.checked ? 'on' : 'off'); }catch(e){}
+  showToast(autoEl.checked ? 'Autosave on' : 'Autosave off', autoEl.checked ? 'ok' : '', 1800); if (autoEl.checked) scheduleAutosave(); };
+let autoT = null, autoBusy = false, autoPending = false, autoArmed = false, toastT = null;
+function showToast(html, kind, ms){ toastEl.innerHTML = html; toastEl.className = kind||''; toastEl.hidden = false; clearTimeout(toastT); if (ms) toastT = setTimeout(()=>toastEl.hidden = true, ms); }
+const designData = (garden, objects)=>JSON.stringify({garden, objects});
+function scheduleAutosave(){ if (!autoArmed || !autoEl.checked || !lastDesign) return; clearTimeout(autoT); autoT = setTimeout(autosave, 1800); }
+async function autosave(){
+  if (!autoEl.checked || !lastDesign) return;
+  if (autoBusy){ autoPending = true; return; }
+  const row = designRows.find(r=>`${r.where}|${r.id}`===lastDesign); if (!row) return;
+  if (row.data && designData(row.data.garden, row.data.objects) === designData(state.garden, state.objects)) return; // nothing changed
+  autoBusy = true; const name = escapeHtml(row.name||'Untitled');
+  showToast(`<span class="spin" aria-hidden="true"></span>Saving to “${name}”…`, 'busy');
+  const doc = {name:row.name, updatedAt:Date.now(), cam:camState(), data:{garden:state.garden, objects:state.objects, dv:DEFAULTS_VERSION}};
+  try {
+    if (row.where==='page'){ if (!db) throw new Error('page storage is not available here'); await db.doc('designs/'+row.id).set(doc); }
+    else { const m = localDesigns(); m[row.id] = doc; writeLocalDesigns(m); renderDesigns(true); }
+    showToast(`Saved to “${name}” · ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`, 'ok', 2500);
+  } catch(e){ showToast(`Autosave to “${name}” failed (${escapeHtml(e.message||e.code||'error')}). Your changes are still kept in this browser.`, 'err', 7000); }
+  autoBusy = false; if (autoPending){ autoPending = false; scheduleAutosave(); }
+}
+function pauseAutosave(why){ setLastDesign(''); renderDesigns(); if (autoEl.checked) showToast(`${why} Autosave is paused until you save or open a design.`, '', 4500); }
+
 document.getElementById('d-export').onclick = async ()=>{
   const json = JSON.stringify({v:1, dv:DEFAULTS_VERSION, garden:state.garden, objects:state.objects}, null, 1);
   if (downloads){ try { await downloads.save({filename:'chyne-k134-garden.json', data:json}); dStatus.textContent='Export ready.'; return; } catch(e){ if (e.code==='declined') return; } }
   if (!window.claude){ fileDownload('chyne-k134-garden.json', new Blob([json],{type:'application/json'})); dStatus.textContent='Export downloaded.'; return; }
   const ta=document.getElementById('d-json'); ta.hidden=false; ta.value=json; ta.select(); dStatus.textContent='Copy the JSON below to keep a copy.';
 };
-document.getElementById('d-import').onchange = async (e)=>{ const f=e.target.files[0]; if (!f) return; try{ const p=JSON.parse(await f.text()); if (!Array.isArray(p.objects)) throw new Error('no objects'); migrateDesign(p); state.garden={...DEFAULT_STATE().garden, ...p.garden}; state.objects=p.objects; rebuildAll(); syncGardenUI(); select(null); pushHistory(); dStatus.textContent=`Imported ${p.objects.length} items.`; }catch(err){ dStatus.textContent='That file is not a garden design export.'; } e.target.value=''; };
+document.getElementById('d-import').onchange = async (e)=>{ const f=e.target.files[0]; if (!f) return; try{ const p=JSON.parse(await f.text()); if (!Array.isArray(p.objects)) throw new Error('no objects'); migrateDesign(p); state.garden={...DEFAULT_STATE().garden, ...p.garden}; state.objects=p.objects; rebuildAll(); syncGardenUI(); select(null); pushHistory(); dStatus.textContent=`Imported ${p.objects.length} items.`; pauseAutosave('Design imported.'); }catch(err){ dStatus.textContent='That file is not a garden design export.'; } e.target.value=''; };
 document.getElementById('d-shot').onclick = async ()=>{
   renderFrame();
   canvas.toBlob(async b=>{ if (!downloads){ fileDownload('chyne-k134-view.png', b); return; } try { await downloads.save({filename:'chyne-k134-view.png', data:b}); } catch(e){ if (e.code!=='declined') dStatus.textContent='Screenshot failed: '+e.message; } }, 'image/png');
 };
 document.getElementById('d-reset').onclick = ()=>{ document.getElementById('d-reset-confirm').hidden=false; };
 document.getElementById('d-reset-no').onclick = ()=>{ document.getElementById('d-reset-confirm').hidden=true; };
-document.getElementById('d-reset-yes').onclick = ()=>{ state = DEFAULT_STATE(); rebuildAll(); syncGardenUI(); select(null); pushHistory(); document.getElementById('d-reset-confirm').hidden=true; dStatus.textContent='Starting garden restored.'; };
+document.getElementById('d-reset-yes').onclick = ()=>{ pauseAutosave('Garden reset.'); state = DEFAULT_STATE(); rebuildAll(); syncGardenUI(); select(null); pushHistory(); document.getElementById('d-reset-confirm').hidden=true; dStatus.textContent='Starting garden restored.'; };
 
 /* keep panels below the toolbar however many rows it wraps to */
 const barEl = document.querySelector('.bar');
@@ -2229,6 +2266,7 @@ function loop(now){
 document.querySelectorAll('[data-season]').forEach(x=>x.setAttribute('aria-pressed', x.dataset.season===ui.season));
 renderBuild(); renderLayers(); syncGardenUI(); applyLayers(); rebuildAll(); updateSun(); setView('aerial'); applyQuality(); pushHistory();
 let savedMode='view'; try{ savedMode = localStorage.getItem(STORE_KEY+'-mode') || 'view'; }catch(e){} ui._lastMode = savedMode; setMode(savedMode);
+autoArmed = true;
 mat.lawn.color.setHex(SEASON[ui.season].lawn);
 requestAnimationFrame(loop);
 </script>

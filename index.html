@@ -94,6 +94,20 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
 .prow{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px;margin:5px 0;font-size:13px}
 .prow .ctl{display:flex;align-items:center;gap:6px}
 .prow input[type=range]{width:110px;accent-color:var(--accent)}
+.brushbar{border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;margin:0 0 10px;background:var(--chip)}
+.brushbar.on{border-color:var(--proposed);box-shadow:inset 3px 0 0 var(--proposed)}
+.brushbar .row{margin:4px 0}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+.chips button{border:1px solid var(--line);background:transparent;border-radius:99px;padding:3px 9px;font-size:12px}
+.chips button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.lib .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:-1px;border:1px solid rgba(0,0,0,.18);flex:none}
+.lib button.target{outline:2px solid var(--proposed);outline-offset:-1px}
+.lib .pl{position:relative}
+.lib .pl .x{position:absolute;top:2px;right:4px;font-size:12px;color:var(--muted);padding:0 3px;border-radius:3px}
+.lib .pl .x:hover{color:var(--warn)}
+#pl-form{border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;margin:6px 0}
+#pl-form .row label{flex:1}
+#pl-form input[type=color]{width:34px;height:24px;padding:0;border:1px solid var(--line);border-radius:4px;background:none}
 .swatches{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:4px 0 8px}
 .swatch{display:flex;align-items:center;gap:7px;font-size:12.5px;border:1px solid var(--line);border-radius:var(--r);padding:4px 6px;min-width:0;cursor:pointer}
 .swatch span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -346,7 +360,53 @@ const KINDS = {
   birch:{label:'Birch'}, conifer:{label:'Conifer'}, olive:{label:'Olive'}, shrub:{label:'Shrub'},
   serviceberry:{label:'Serviceberry (Amelanchier)'}, burningbush:{label:'Burning bush (Euonymus)'}, lavender:{label:'Lavender'}, grass:{label:'Ornamental grass'}, aster:{label:'Asters / perennials'}
 };
-const PAVE = {tiles:'Large tiles',mulch:'Bark mulch bed',slabs:'Stepping slabs in gravel',concrete:'Concrete pavers',setts:'Granite setts',gravel:'Gravel',grasspavers:'Grass pavers',wood:'Wood deck'};
+// growth forms map onto the procedural tree builder's branching presets
+const FORMS = {tree:'Tree', small:'Small tree', multistem:'Multi-stem tree', columnar:'Columnar tree', spreading:'Spreading tree', conifer:'Conifer', shrub:'Shrub', mound:'Rounded shrub / ball', perennial:'Perennial', grass:'Grass'};
+const FORM_KIND = {tree:'deciduous', small:'fruit', multistem:'blossom', columnar:'birch', spreading:'olive', conifer:'conifer', shrub:'shrub', mound:'lavender', perennial:'aster', grass:'grass'};
+const SPECIES = {
+  'acer-palmatum':{label:'Japanese maple', cat:'Trees', form:'multistem', h:3, crown:3, leaf:[0x6e1f24,0x8a2f2c], autumn:[0xc0262a,0xe0472f]},
+  'acer-campestre':{label:'Field maple', cat:'Trees', form:'tree', h:8, crown:6, leaf:[0x5b8a3a,0x6f9c45], autumn:[0xe2b53a,0xd29a26]},
+  'prunus-kanzan':{label:'Japanese cherry Kanzan', cat:'Trees', form:'tree', h:7, crown:6, leaf:[0x5d8a3c,0x6f9a46], autumn:[0xd7642c,0xc8442a], flower:{season:'spring', col:[0xf2a9c4,0xf7c6d8]}},
+  'malus':{label:'Apple tree', cat:'Trees', form:'small', h:4, crown:4, leaf:[0x5a8a3c,0x6c9a48], autumn:[0xd4b03c,0xc29434], flower:{season:'spring', col:[0xfbeef0,0xf5d5dc]}},
+  'magnolia':{label:'Magnolia', cat:'Trees', form:'multistem', h:4.5, crown:4, leaf:[0x55803a,0x678f44], autumn:[0xb9934a,0xa07a3c], flower:{season:'spring', col:[0xf6e3ea,0xe7b6c8]}},
+  'liquidambar':{label:'Sweetgum', cat:'Trees', form:'tree', h:10, crown:5, leaf:[0x4f8236,0x5f9440], autumn:[0xb3202e,0x7b1e3c]},
+  'ginkgo':{label:'Ginkgo', cat:'Trees', form:'columnar', h:10, crown:4, leaf:[0x6f9a3e,0x86ad4c], autumn:[0xf0c933,0xe6b820]},
+  'carpinus-fastigiata':{label:'Columnar hornbeam', cat:'Trees', form:'columnar', h:7, crown:2.5, leaf:[0x4f8136,0x5f9440], autumn:[0xd9a43a,0xb98a35]},
+  'tilia':{label:'Lime tree (linden)', cat:'Trees', form:'tree', h:12, crown:8, leaf:[0x5a8c3a,0x6c9c46], autumn:[0xe4c040,0xd3a832]},
+  'quercus':{label:'Oak', cat:'Trees', form:'tree', h:14, crown:10, leaf:[0x4a7a32,0x5a8a3c], autumn:[0xb06a2b,0x8f5525]},
+  'betula-utilis':{label:'Himalayan birch', cat:'Trees', form:'multistem', h:8, crown:4, leaf:[0x7aa64a,0x92ba5c], autumn:[0xeac040,0xd9a52c], bark:'white'},
+  'pinus':{label:'Scots pine', cat:'Conifers', form:'conifer', h:10, crown:4, leaf:[0x2f4f36,0x3d6043], evergreen:true},
+  'thuja':{label:'Thuja Smaragd', cat:'Conifers', form:'conifer', h:4, crown:1.2, leaf:[0x3b6b3a,0x4d7d45], evergreen:true},
+  'pinus-mugo':{label:'Mountain pine', cat:'Conifers', form:'mound', h:1.2, crown:1.6, leaf:[0x2f5434,0x3e6640], evergreen:true, tex:'needle'},
+  'taxus':{label:'Yew', cat:'Conifers', form:'shrub', h:2, crown:1.6, leaf:[0x22402a,0x2e5233], evergreen:true, tex:'olive'},
+  'hydrangea':{label:'Hydrangea (blue)', cat:'Shrubs', form:'shrub', h:1.3, crown:1.5, leaf:[0x4f7f3a,0x5f8f44], autumn:[0x8c6a3a,0xa07d48], flower:{season:'summer', col:[0x9fb6ef,0xc9d4f5]}},
+  'hydrangea-paniculata':{label:'Panicle hydrangea', cat:'Shrubs', form:'shrub', h:1.8, crown:1.8, leaf:[0x55843c,0x669446], autumn:[0xb98a5a,0xd2a4a4], flower:{season:'summer', col:[0xf4f1e6,0xefe5c8]}},
+  'buxus':{label:'Box ball', cat:'Shrubs', form:'mound', h:.7, crown:.8, leaf:[0x3f6a35,0x4f7d40], evergreen:true},
+  'rosa':{label:'Rose', cat:'Shrubs', form:'shrub', h:1.1, crown:1, leaf:[0x3f6e34,0x4f7e3e], autumn:[0x8a6a3a,0x9a7a44], flower:{season:'summer', col:[0xd2304d,0xe7556c]}},
+  'buddleja':{label:'Butterfly bush', cat:'Shrubs', form:'shrub', h:2.2, crown:2, leaf:[0x6d8a64,0x809c76], flower:{season:'summer', col:[0x9a6fc0,0xb28bd3]}},
+  'forsythia':{label:'Forsythia', cat:'Shrubs', form:'shrub', h:2, crown:2, leaf:[0x5a8a3c,0x6c9a48], autumn:[0xa68a3c,0x8c7032], flower:{season:'spring', col:[0xf2d22e,0xe8c21f]}},
+  'rhododendron':{label:'Rhododendron', cat:'Shrubs', form:'mound', h:1.4, crown:1.6, leaf:[0x2f5a30,0x3b6a3a], evergreen:true, flower:{season:'spring', col:[0xd65a9a,0xe57bb0]}},
+  'cornus':{label:'Red-twig dogwood', cat:'Shrubs', form:'shrub', h:1.8, crown:1.8, leaf:[0x557f3a,0x678f44], autumn:[0xa8243a,0xc23b4a]},
+  'salvia':{label:'Salvia', cat:'Perennials', form:'perennial', h:.5, crown:.5, leaf:[0x5e7a4c,0x6f8a5a], flower:{season:'summer', col:[0x5b4aa6,0x7a64c2]}},
+  'echinacea':{label:'Coneflower', cat:'Perennials', form:'perennial', h:.8, crown:.6, leaf:[0x557a3c,0x668a48], flower:{season:'summer', col:[0xd05f8f,0xe07aa3]}},
+  'rudbeckia':{label:'Black-eyed Susan', cat:'Perennials', form:'perennial', h:.7, crown:.6, leaf:[0x557a3c,0x668a48], flower:{season:'summer', col:[0xf2b72a,0xe8a21c]}},
+  'nepeta':{label:'Catmint', cat:'Perennials', form:'perennial', h:.45, crown:.7, leaf:[0x7a8f78,0x8d9f8a], flower:{season:'summer', col:[0x8b8fd6,0xa5a8e2]}},
+  'hosta':{label:'Hosta', cat:'Perennials', form:'mound', h:.45, crown:.75, leaf:[0x4e7a52,0x6f9a63]},
+  'fern':{label:'Fern', cat:'Perennials', form:'mound', h:.6, crown:.8, leaf:[0x5f8f3e,0x7aa84e], autumn:[0x9a7a3a,0xb08a44]},
+  'pennisetum':{label:'Fountain grass', cat:'Grasses', form:'grass', h:.8, crown:.9, leaf:[0x6d8a45,0xb7b07a], autumn:[0xc7a96a,0xe2d3a0]},
+  'stipa-tenuissima':{label:'Mexican feather grass', cat:'Grasses', form:'grass', h:.5, crown:.5, leaf:[0x9aa860,0xd9d39a], autumn:[0xcdb77a,0xe8dcb0]},
+  'carex':{label:'Sedge (Carex)', cat:'Grasses', form:'grass', h:.35, crown:.45, leaf:[0x7a8f4a,0xa6b46a], evergreen:true},
+  'calamagrostis':{label:'Feather reed grass', cat:'Grasses', form:'grass', h:1.6, crown:.6, leaf:[0x6a8a40,0xa8a860], autumn:[0xc9ad6e,0xe0cc90]}
+};
+const OLD_KIND_PLANTS = [ // the original built-in kinds, shown in the catalogue alongside the species
+  ['blossom','Flowering cherry','Trees',5,4.5,0xf3bfd3],['fruit','Fruit tree','Trees',4,3.5,0x6f9a46],['deciduous','Deciduous tree','Trees',8,6,0x5f9440],
+  ['birch','Birch','Trees',9,3.5,0x9cc260],['olive','Olive','Trees',3,2.5,0x8d9b72],['serviceberry','Serviceberry','Trees',3.5,3.2,0xd8462a],
+  ['conifer','Conifer','Conifers',6,2.5,0x2d4f37],['shrub','Shrub','Shrubs',1.4,1.6,0x5f8f3d],['burningbush','Burning bush','Shrubs',1.4,1.6,0xc4183a],
+  ['lavender','Lavender','Perennials',.6,1,0xa6b0a4],['aster','Asters','Perennials',.6,.7,0xf0eee8],['grass','Miscanthus','Grasses',1.3,.9,0x9cbc5c]];
+const PLANT_CATS = ['All','Trees','Conifers','Shrubs','Perennials','Grasses','My plants'];
+const STONE_STYLES = {menhir:'Natural standing stone', slab:'Split slab', column:'Basalt column'};
+const SHAPES = {rect:'Rectangle', oval:'Oval', organic:'Organic'};
+const PAVE = {tiles:'Large tiles',mulch:'Bark mulch bed',slabs:'Stepping slabs in gravel',concrete:'Concrete pavers',setts:'Granite setts',gravel:'Grey gravel',chips:'White marble chips',pebbles:'River pebbles',slate:'Slate chippings',golden:'Golden gravel',grasspavers:'Grass pavers',wood:'Wood deck'};
 const WALLM = {concrete:'Concrete',fence:'Panel fence',gabion:'Gabion',wood:'Wood screen',hedge:'Hedge'};
 const TYPES = {
   tree:{f:[['kind','Species',KINDS],['h','Height',.5,25,.1],['crown','Crown width',.3,15,.1]]},
@@ -360,7 +420,7 @@ const TYPES = {
   pergola:{f:[['w','Width',2,8,.1],['d','Depth',2,6,.1],['h','Height',2.2,3.2,.05]]},
   carport:{f:[['w','Width',2.5,8,.1],['d','Depth',3,7,.1],['h','Height',2.2,3.2,.05]]},
   shed:{f:[['w','Width',1,5,.1],['d','Depth',1,4,.1],['h','Height',1.8,3,.05]]},
-  paving:{f:[['mat','Surface',PAVE],['w','Length',.3,25,.1],['d','Width',.3,25,.1],['h','Thickness',.02,.5,.01]]},
+  paving:{f:[['mat','Surface',PAVE],['shape','Shape',SHAPES],['w','Length',.3,25,.1],['d','Width',.3,25,.1],['h','Thickness',.02,.5,.01]]},
   wall:{f:[['mat','Type',WALLM],['w','Length',.3,25,.1],['d','Thickness',.05,1.5,.05],['h','Height',.2,3,.05]]},
   steps:{f:[['w','Width',.6,4,.1],['h','Rise',.15,2.5,.05]]},
   bed:{f:[['w','Length',.6,6,.1],['d','Width',.4,3,.1],['h','Height',.15,1,.05]]},
@@ -368,7 +428,10 @@ const TYPES = {
   lounger:{f:[['style','Style',{wood:'Wooden',white:'White cushion, metal frame'}]]},
   sofa:{f:[['style','Style',{white:'Light upholstered, metal frame', wood:'Wooden frame, dark cushions'}],['w','Length',1.2,4,.05],['d','Return length',.8,3,.05]]},
   table:{f:[['w','Length',.8,3,.05],['d','Width',.6,1.4,.05]]}, bench:{f:[['w','Length',.8,3,.05]]}, grill:{f:[]},
-  boulder:{f:[['w','Size',.3,2,.05]]}, timberframe:{f:[['w','Width',1,5,.1],['d','Depth',.1,3,.1],['h','Height',1.5,3,.05]]},
+  boulder:{f:[['w','Size',.3,2,.05]]},
+  standing:{f:[['style','Type',STONE_STYLES],['w','Width',.15,2,.05],['d','Thickness',.1,1.5,.05],['h','Height',.3,4,.05]]},
+  stonegroup:{f:[['h','Tallest stone',.5,3.5,.05],['w','Stone width',.2,1.2,.05]]},
+  steppers:{f:[['n','Number of stones',2,16,1,''],['gap','Spacing',.4,1.2,.05],['w','Stone size',.3,.9,.05]]}, timberframe:{f:[['w','Width',1,5,.1],['d','Depth',.1,3,.1],['h','Height',1.5,3,.05]]},
   tableset:{f:[['w','Table length',.8,3,.1]]}, umbrella:{f:[['w','Diameter',2,4,.1]]},
   trampoline:{f:[['w','Diameter',2,5,.1]]}, firepit:{f:[['w','Diameter',.6,1.6,.05]]},
   car:{f:[]}, pillar:{f:[['w','Width',.3,2,.05],['d','Depth',.3,1.5,.05],['h','Height',.5,2.5,.05]]}
@@ -396,21 +459,20 @@ const LIBRARY = [
     ['Steps','steps',{w:1.5,h:.8},'1.5 m wide'],
     ['Project area','zone',{w:10,d:6},'outline only'],
     ['Stepping slabs','paving',{mat:'slabs',w:2.4,d:.6,h:.05},'2.4 m'],
-    ['Timber frame','timberframe',{w:2.4,d:.12,h:2.2},'2.4 × 2.2 m'],
-    ['Boulder','boulder',{w:.8},'Ø0.8 m']]],
-  ['Plants',[
-    ['Flowering cherry','tree',{kind:'blossom',h:5,crown:4.5},'5 m'],
-    ['Fruit tree','tree',{kind:'fruit',h:4,crown:3.5},'4 m'],
-    ['Deciduous tree','tree',{kind:'deciduous',h:8,crown:6},'8 m'],
-    ['Birch','tree',{kind:'birch',h:9,crown:3.5},'9 m'],
-    ['Conifer','tree',{kind:'conifer',h:6,crown:2.5},'6 m'],
-    ['Olive','tree',{kind:'olive',h:3,crown:2.5},'3 m'],
-    ['Shrub','tree',{kind:'shrub',h:1.4,crown:1.6},'1.4 m'],
-    ['Serviceberry','tree',{kind:'serviceberry',h:3.5,crown:3.2},'3.5 m'],
-    ['Burning bush','tree',{kind:'burningbush',h:1.4,crown:1.6},'1.4 m'],
-    ['Lavender','tree',{kind:'lavender',h:.6,crown:1},'0.6 m'],
-    ['Ornamental grass','tree',{kind:'grass',h:1.3,crown:.9},'1.3 m'],
-    ['Asters','tree',{kind:'aster',h:.6,crown:.7},'0.6 m'],
+    ['Timber frame','timberframe',{w:2.4,d:.12,h:2.2},'2.4 × 2.2 m']]],
+  ['Stones & ground',[
+    ['Grey gravel area','paving',{mat:'gravel',shape:'organic',w:3,d:2,h:.05},'3 × 2 m, organic'],
+    ['White marble chips','paving',{mat:'chips',shape:'rect',w:2,d:2,h:.05},'2 × 2 m'],
+    ['River pebble bed','paving',{mat:'pebbles',shape:'oval',w:2.5,d:1.5,h:.06},'2.5 × 1.5 m, oval'],
+    ['Slate chippings','paving',{mat:'slate',shape:'organic',w:3,d:2,h:.05},'3 × 2 m, organic'],
+    ['Golden gravel path','paving',{mat:'golden',shape:'rect',w:6,d:1,h:.05},'6 × 1 m'],
+    ['Boulder','boulder',{w:.8},'Ø0.8 m'],
+    ['Standing stone','standing',{style:'menhir',w:.5,d:.4,h:1.6},'1.6 m'],
+    ['Split slab','standing',{style:'slab',w:.9,d:.22,h:1.4},'1.4 m'],
+    ['Basalt column','standing',{style:'column',w:.35,d:.35,h:1.2},'1.2 m'],
+    ['Stone group','stonegroup',{h:1.5,w:.5},'3 stones'],
+    ['Stepping stones','steppers',{n:5,gap:.65,w:.5},'5 stones']]],
+  ['Beds & hedges',[
     ['Hedge','wall',{mat:'hedge',w:5,d:.8,h:1.6},'5 m'],
     ['Raised bed','bed',{w:2,d:1,h:.4},'2 × 1 m']]],
   ['Furniture',[
@@ -516,6 +578,10 @@ const tex = {
   tiles: tileTex(.6/1.2,'#8a8a86'), // 60 cm tiles on a 1.2 m texture
   concrete: canvasTex(256,(g,s)=>{g.fillStyle='#fff';g.fillRect(0,0,s,s);g.strokeStyle='#8b8b88';g.lineWidth=2;for(let r=0;r<10;r++){const y=r*s/10;g.beginPath();g.moveTo(0,y);g.lineTo(s,y);g.stroke();for(let c=0;c<5;c++){const x=(c+(r%2?.5:0))*s/5;g.beginPath();g.moveTo(x,y);g.lineTo(x,y+s/10);g.stroke();}}}),
   setts: canvasTex(256,(g,s)=>{g.fillStyle='#777';g.fillRect(0,0,s,s);for(let r=0;r<12;r++)for(let c=0;c<12;c++){const v=150+rnd()*70|0;g.fillStyle=`rgb(${v},${v-4},${v-8})`;g.fillRect(c*s/12+1.5,r*s/12+1.5,s/12-3,s/12-3);}}),
+  chips: canvasTex(256,(g,s)=>{g.fillStyle='#e4e2dc';g.fillRect(0,0,s,s);for(let i=0;i<5500;i++){const v=`hsl(40,${5+rnd()*8|0}%,${82+rnd()*16|0}%)`;g.fillStyle=v;g.beginPath();g.ellipse(rnd()*s,rnd()*s,1+rnd()*2.2,1+rnd()*2.2*(.6+rnd()*.4),rnd()*3,0,7);g.fill();}}),
+  pebbles: canvasTex(256,(g,s)=>{g.fillStyle='#7d7468';g.fillRect(0,0,s,s);for(let i=0;i<900;i++){const v=`hsl(${25+rnd()*20|0},${8+rnd()*14|0}%,${35+rnd()*35|0}%)`;g.fillStyle=v;g.beginPath();g.ellipse(rnd()*s,rnd()*s,3+rnd()*5,3+rnd()*5*(.6+rnd()*.4),rnd()*3,0,7);g.fill();}}),
+  slate: canvasTex(256,(g,s)=>{g.fillStyle='#3d4248';g.fillRect(0,0,s,s);for(let i=0;i<3000;i++){const v=`hsl(210,${6+rnd()*8|0}%,${22+rnd()*20|0}%)`;g.fillStyle=v;g.beginPath();g.ellipse(rnd()*s,rnd()*s,2+rnd()*4,2+rnd()*4*(.6+rnd()*.4),rnd()*3,0,7);g.fill();}}),
+  golden: canvasTex(256,(g,s)=>{g.fillStyle='#b99b6a';g.fillRect(0,0,s,s);for(let i=0;i<5500;i++){const v=`hsl(${30+rnd()*12|0},${25+rnd()*20|0}%,${45+rnd()*25|0}%)`;g.fillStyle=v;g.beginPath();g.ellipse(rnd()*s,rnd()*s,1+rnd()*2,1+rnd()*2*(.6+rnd()*.4),rnd()*3,0,7);g.fill();}}),
   gravel: canvasTex(256,(g,s)=>{g.fillStyle='#bdb7aa';g.fillRect(0,0,s,s);for(let i=0;i<6000;i++){const v=150+rnd()*100|0;g.fillStyle=`rgb(${v},${v-6},${v-14})`;g.beginPath();g.arc(rnd()*s,rnd()*s,1+rnd()*1.6,0,7);g.fill();}}),
   grasspavers: canvasTex(256,(g,s)=>{g.fillStyle='#7f9b5a';g.fillRect(0,0,s,s);g.fillStyle='#b9b6ad';const n=6;for(let r=0;r<n;r++)for(let c=0;c<n;c++){g.fillRect(c*s/n,r*s/n,s/n,6);g.fillRect(c*s/n,r*s/n,6,s/n);} }),
   wood: canvasTex(256,(g,s)=>{for(let r=0;r<8;r++){const v=170+rnd()*40|0;g.fillStyle=`rgb(${v},${v*.72|0},${v*.48|0})`;g.fillRect(0,r*s/8,s,s/8-3);}g.fillStyle='#3a2a1c';for(let r=0;r<8;r++)g.fillRect(0,r*s/8+s/8-3,s,3);}),
@@ -562,13 +628,46 @@ const mat = {
   pv: M({color:0x1d2633, roughness:.3, metalness:.6})
 };
 const paveMat = {};
+const GRAVELS = {gravel:['#9a968e','#b8b3a8','#7d7a73','#cfcabe'], chips:['#f4f3ef','#e6e3db','#d8d4ca','#fbfaf7'], pebbles:['#8a7d6c','#a39684','#5f574d','#c2b7a6','#6f6a62'], slate:['#3c4249','#4a5059','#2f343a','#575e67'], golden:['#c4a676','#a98c5c','#d6bd8f','#8e7550']};
+const stoneTex = canvasTex(256,(g,s2)=>{ g.fillStyle='#8a8a8a'; g.fillRect(0,0,s2,s2); for (let i=0;i<4500;i++){ const v=90+rnd()*120|0; g.fillStyle=`rgb(${v},${v},${v})`; g.fillRect(rnd()*s2,rnd()*s2,1+rnd()*2,1+rnd()*2); }
+  for (let i=0;i<30;i++){ g.strokeStyle=`rgba(40,40,40,${.15+rnd()*.25})`; g.lineWidth=1; g.beginPath(); let x=rnd()*s2, y=rnd()*s2; g.moveTo(x,y); for (let k=0;k<5;k++){ x+=(rnd()-.5)*40; y+=(rnd()-.5)*40; g.lineTo(x,y); } g.stroke(); } });
+const stoneMats = {};
+function stoneMat(style){ if (!stoneMats[style]){ const col = {menhir:0xd6d0c4, slab:0xb3aea5, column:0x6b6e72, step:0xcac5bb}[style]||0x9a958c;
+  stoneMats[style] = M({color:col, map:stoneTex, bumpMap:stoneTex, bumpScale:4, roughness:.92}); stoneMats[style].userData.part = 'Stone'; } return stoneMats[style]; }
+function noisyStone(geo, seed, amt){ const pa=geo.attributes.position; for (let i=0;i<pa.count;i++){ const x=pa.getX(i), y=pa.getY(i), z=pa.getZ(i);
+  const f = 1 + amt*(Math.sin(x*9.1+seed)*Math.sin(y*7.3+seed*.7)*Math.sin(z*8.7+seed*1.3) + .5*Math.sin(x*17+y*13+seed)); pa.setXYZ(i, x*f, y, z*f); } geo.computeVertexNormals(); return geo; }
+function standingStoneMesh(style, w, h, d, seedStr){
+  const sd = hashStr(seedStr)%97; let geo;
+  if (style==='column'){ geo = new THREE.CylinderGeometry(.5,.5,1,6,1); geo.rotateY(sd*.1); }
+  else if (style==='slab'){ geo = new THREE.BoxGeometry(1,1,1,5,10,2); const pa=geo.attributes.position;
+    for (let i=0;i<pa.count;i++){ const x=pa.getX(i), y=pa.getY(i); if (y>.45) pa.setY(i, y - .25*(x+.5)*((sd%2)?1:-1)*.6 - .08*Math.sin(x*9+sd)); pa.setX(i, x*(1-.12*(y+.5))); }
+    noisyStone(geo, sd, .05); }
+  else { geo = new THREE.CylinderGeometry(.5,.5,1,12,10); const pa=geo.attributes.position;
+    for (let i=0;i<pa.count;i++){ const y=pa.getY(i), t=y+.5, k = 1 - .45*t*t + .08*Math.sin(t*6+sd); pa.setXYZ(i, pa.getX(i)*k, y, pa.getZ(i)*k); if (y>.49){ pa.setY(i, .5 - .12*Math.abs(pa.getX(i)) ); } }
+    noisyStone(geo, sd, .09); }
+  geo.scale(w, h, d); geo.translate(0, h/2 - .08, 0);
+  const m = new THREE.Mesh(geo, stoneMat(style)); m.rotation.z = ((sd%7)-3)*.012; m.castShadow = m.receiveShadow = true; return m;
+}
+function gravelScatter(g, p, local, seedStr){ // real pebbles on top of loose surfaces (High and Ultra)
+  const pal = GRAVELS[p.mat]; if (!pal || !Q().tx) return;
+  const big = p.mat==='pebbles', flat = p.mat==='slate', area = p.w*p.d, n = Math.round(THREE.MathUtils.clamp(area*(big?90:160)*Q().leaves, 30, 2600));
+  const im = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, big?1:0), M({color:0xffffff, roughness:big?.55:.85}), n);
+  const mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), col = new THREE.Color(); let sd = hashStr(seedStr), placed = 0;
+  const r = ()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  for (let tries=0; placed<n && tries<n*4; tries++){
+    const x=(r()-.5)*p.w, z=(r()-.5)*p.d; if (local && !pip([x,z], local)) continue;
+    const sz = big ? .025+r()*.035 : .009+r()*.012;
+    e.set(r()*6, r()*6, r()*6); q.setFromEuler(e); mtx.compose(V(x, p.h+sz*.25, z), q, V(sz*(1+r()*.5), sz*(flat?.25:.55+r()*.3), sz*(1+r()*.4)));
+    im.setMatrixAt(placed, mtx); im.setColorAt(placed, col.set(pal[Math.floor(r()*pal.length)])); placed++; }
+  im.count = placed; im.receiveShadow = true; im.castShadow = big; im.material.userData.part = 'Stones'; g.add(im);
+}
 const cladTex = canvasTex(256,(g,s2)=>{ g.fillStyle='#fff'; g.fillRect(0,0,s2,s2); for (let i=0;i<8;i++){ const y=i*s2/8; g.fillStyle='rgba(0,0,0,.35)'; g.fillRect(0,y,s2,2); g.fillStyle='rgba(255,255,255,.25)'; g.fillRect(0,y+2,s2,1); for (let k=0;k<40;k++){ g.fillStyle=`rgba(0,0,0,${rnd()*.06})`; g.fillRect(rnd()*s2,y+3+rnd()*(s2/8-4),20+rnd()*60,1); } } });
 cladTex.repeat.set(1.5,1.5);
 const saunaClad = M({color:0x3a4046, map:cladTex, roughness:.75}), saunaFrame = M({color:0x2c3136, roughness:.55, metalness:.15});
 const saunaStone = M({color:0x55585c, roughness:.9}), saunaWood = M({color:0xe2c49a, roughness:.8}), saunaHeater = M({color:0x3a3a3a, roughness:.5, metalness:.6});
 const furnCushLight = M({color:0xe7e4dd, roughness:.95}), furnCushDark = M({color:0x222326, roughness:.9}), furnPillowGrey = M({color:0x9b9d9f, roughness:.95});
 const glassTop = M({color:0xbccbd0, roughness:.08, metalness:.25});
-for (const k of Object.keys(PAVE)) paveMat[k] = M({color: {slabs:0xffffff, mulch:0xffffff, tiles:0x8f908c, concrete:0xa9a7a0, setts:0xffffff, gravel:0xffffff, grasspavers:0xffffff, wood:0xb48356}[k], map: tex[k] || tex.tiles});
+for (const k of Object.keys(PAVE)) paveMat[k] = M({color: {chips:0xffffff, pebbles:0xffffff, slate:0xffffff, golden:0xffffff, slabs:0xffffff, mulch:0xffffff, tiles:0x8f908c, concrete:0xa9a7a0, setts:0xffffff, gravel:0xffffff, grasspavers:0xffffff, wood:0xb48356}[k], map: tex[k] || tex.tiles});
 
 /* ---------- geometry helpers ---------- */
 const V = (x,y,z)=>new THREE.Vector3(x,y,z);
@@ -904,6 +1003,13 @@ function ellipseFP(o, w, d, n=28){
   for (let i=0;i<n;i++){ const t=i/n*Math.PI*2, lx=Math.cos(t)*w/2*(1+.08*Math.sin(3*t)), lz=Math.sin(t)*d/2*(1+.06*Math.cos(2*t)); pts.push([o.x+lx*c+lz*s, o.y-lx*s+lz*c]); }
   return pts;
 }
+function shapeLocal(p, seedStr){ // outline of an oval / organic patch in the object's local frame
+  const n = 40, pts = [], sd = hashStr(seedStr||'x'), org = p.shape==='organic';
+  for (let i=0;i<n;i++){ const t=i/n*Math.PI*2;
+    const f = org ? 1 + .13*Math.sin(3*t + sd%7) + .08*Math.sin(5*t + sd%11) + .05*Math.sin(7*t + sd%5) : 1;
+    pts.push([Math.cos(t)*p.w/2*f*(org?.92:1), Math.sin(t)*p.d/2*f*(org?.92:1)]); }
+  return pts;
+}
 function footprint(o){
   const p=o.p||{};
   switch(o.type){
@@ -917,6 +1023,10 @@ function footprint(o){
     case 'lounger': return rectFP(o, .7, 2.0);
     case 'bench': return rectFP(o, p.w, .45);
     case 'boulder': return ellipseFP(o, p.w, p.w*.8, 12);
+    case 'standing': return rectFP(o, p.w, p.d);
+    case 'stonegroup': return ellipseFP(o, p.w*3.2, p.w*2.4, 12);
+    case 'steppers': return rectFP(o, p.w, p.n*p.gap);
+    case 'paving': if (p.shape==='oval' || p.shape==='organic'){ const r=o.rot*Math.PI/180, c=Math.cos(r), sn=Math.sin(r); return shapeLocal(p, o.id).map(([lx,lz])=>[o.x+lx*c+lz*sn, o.y-lx*sn+lz*c]); } return rectFP(o, p.w, p.d);
     case 'timberframe': return rectFP(o, p.w, Math.max(.2,p.d));
     case 'tableset': return rectFP(o, (p.w||1.6)+1.0, 1.9);
     case 'car': return rectFP(o, 1.85, 4.7);
@@ -1082,12 +1192,33 @@ function leafLook(kind){ // texture + colour for this species and season
   const g = {birch:[0x86b04e,0x9cc260], shrub:[0x5f8f3d,0x77a548]}[kind] || (se==='spring' ? [0x8cc152,0x74ad45] : [0x4f8136,0x5f9440]);
   return {tex:'leaf', col:g};
 }
+function getSpecies(id){ return SPECIES[id] || state.garden.plantTypes?.[id]; }
+function speciesLook(sp){ const se = ui.season, tex = sp.form==='conifer' ? 'needle' : (sp.tex||'leaf');
+  if (sp.flower && sp.flower.season===se) return {tex:'fruitblossom', col:sp.flower.col};
+  if (se==='winter') return sp.evergreen ? {tex, col:sp.leaf.map(c=>new THREE.Color(c).multiplyScalar(.85).getHex())} : null;
+  if (se==='autumn' && sp.autumn) return {tex, col:sp.autumn};
+  if (se==='summer') return {tex, col:sp.leaf.map(c=>new THREE.Color(c).multiplyScalar(.9).getHex())};
+  return {tex, col:sp.leaf};
+}
+function grassCols(sp){ const se = ui.season;
+  if (se==='autumn' && sp.autumn) return sp.autumn;
+  if (se==='winter') return sp.evergreen ? sp.leaf : [0x8f7f55,0xcbbb8c];
+  return sp.leaf;
+}
+function syncKinds(){ // the Species list in the properties panel includes catalogue and custom plants
+  for (const k of Object.keys(KINDS)) if (k.startsWith('sp:')) delete KINDS[k];
+  for (const [id,sp] of Object.entries(SPECIES)) KINDS['sp:'+id] = {label:sp.label};
+  for (const [id,sp] of Object.entries(state.garden.plantTypes||{})) KINDS['sp:'+id] = {label:sp.label+' (my plant)'};
+}
 function buildTree(g, o){
-  const p=o.p, k=p.kind, H=Math.max(.4,p.h), CW=Math.max(.3,p.crown);
+  const p=o.p; let k=p.kind;
+  const sp = typeof k==='string' && k.startsWith('sp:') ? (getSpecies(k.slice(3)) || {form:'tree', leaf:[0x5f9440,0x74ad45], autumn:[0xd88a2c,0xc2602a]}) : null;
+  if (sp) k = FORM_KIND[sp.form] || 'deciduous';
+  const H=Math.max(.4,p.h), CW=Math.max(.3,p.crown);
   let sd=hashStr(o.id+k); const r=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
   const segs=[], tips=[], up=new THREE.Vector3(0,1,0);
   if (k==='grass'){ // fountain of arching blades
-    const C = {spring:[0x5f8a3a,0x9cbc5c], summer:[0x4d7a33,0x8cad55], autumn:[0x8d8743,0xdcc67c], winter:[0x8f7f55,0xcbbb8c]}[ui.season];
+    const C = sp ? grassCols(sp) : {spring:[0x5f8a3a,0x9cbc5c], summer:[0x4d7a33,0x8cad55], autumn:[0x8d8743,0xdcc67c], winter:[0x8f7f55,0xcbbb8c]}[ui.season];
     const cA=new THREE.Color(C[0]), cB=new THREE.Color(C[1]), tmp=new THREE.Color();
     const n = Math.round(THREE.MathUtils.clamp(900*CW*CW*Q().leaves, 160, 1400));
     const pos=[], nor=[], col=[], tip=[], ph=[], idx=[];
@@ -1143,14 +1274,14 @@ function buildTree(g, o){
   for (const s2 of segs){ const dir=s2.b.clone().sub(s2.a), L=dir.length(); if (L<.01 || s2.r0<.004) continue;
     const cg=new THREE.CylinderGeometry(Math.max(.003,s2.r1), Math.max(.004,s2.r0), L, s2.r0>.04?7:4, 1, true);
     cg.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(up, dir.normalize())); cg.translate((s2.a.x+s2.b.x)/2,(s2.a.y+s2.b.y)/2,(s2.a.z+s2.b.z)/2); geos.push(cg); }
-  if (geos.length){ const bm=new THREE.Mesh(mergeGeometries(geos), k==='birch'?birchBarkMat:barkMat); bm.castShadow=bm.receiveShadow=true; g.add(bm); geos.forEach(x=>x.dispose()); }
+  if (geos.length){ const bm=new THREE.Mesh(mergeGeometries(geos), (sp ? sp.bark==='white' : k==='birch')?birchBarkMat:barkMat); bm.castShadow=bm.receiveShadow=true; g.add(bm); geos.forEach(x=>x.dispose()); }
   // leaves / blossom cards
-  const look = leafLook(k); if (!look || !tips.length) return;
+  const look = sp ? speciesLook(sp) : leafLook(k); if (!look || !tips.length) return;
   if (k==='lavender' || k==='aster' || k==='burningbush'){ // dense body under the leaf cards
     const mg = new THREE.IcosahedronGeometry(1, 3), pa = mg.attributes.position; // lumpy, not a perfect ball
     for (let i=0;i<pa.count;i++){ const x=pa.getX(i), y=pa.getY(i), z=pa.getZ(i), f=1+.13*Math.sin(x*7.1+sd%7)*Math.sin(y*6.3)*Math.sin(z*5.7+1)+.07*Math.sin(x*15+z*13); pa.setXYZ(i,x*f,y*f,z*f); }
     mg.computeVertexNormals();
-    const mound = new THREE.Mesh(mg, foliageMat(k, look.col[0]));
+    const mound = new THREE.Mesh(mg, foliageMat(k, sp ? (look.tex==='fruitblossom' ? sp.leaf[0] : look.col[0]) : look.col[0]));
     mound.scale.set(CW*.42, H*.45, CW*.42); mound.position.y = H*.42; mound.castShadow = mound.receiveShadow = true; g.add(mound); }
   const c = TREE_CFG[k] || {leafR:.4, card:.5};
   const dens = {lavender:22, aster:16, burningbush:5, shrub:2}[k] || 1;
@@ -1179,7 +1310,18 @@ function buildObject(o){
   const g = new THREE.Group(), p = o.p || {};
   switch (o.type){
     case 'tree': buildTree(g,o); break;
-    case 'paving': { const m = box(p.w, p.h, p.d, paveMat[p.mat]||paveMat.tiles, 0, p.h/2, 0); fitUV(m.geometry, p.w, p.d, p.mat==='tiles'?1.2:2); g.add(m); break; }
+    case 'paving': { const pm = paveMat[p.mat]||paveMat.tiles, ts = p.mat==='tiles'?1.2:GRAVELS[p.mat]?1.5:2;
+      if (p.shape==='oval' || p.shape==='organic'){ const loc = shapeLocal(p, o.id); const m = slab(loc, 0, p.h, pm); const uv=m.geometry.attributes.uv; for (let i=0;i<uv.count;i++) uv.setXY(i, uv.getX(i)/ts, uv.getY(i)/ts); uv.needsUpdate=true; g.add(m); gravelScatter(g, p, loc, o.id); }
+      else { const m = box(p.w, p.h, p.d, pm, 0, p.h/2, 0); fitUV(m.geometry, p.w, p.d, ts); g.add(m); gravelScatter(g, p, null, o.id); }
+      break; }
+    case 'standing': g.add(standingStoneMesh(p.style||'menhir', p.w, p.h, p.d, o.id)); break;
+    case 'stonegroup': { const H=p.h, W=p.w;
+      for (const [x,z,hf,wf,st] of [[0,0,1,1,0],[W*1.1,W*.55,.72,.85,1],[-W*.95,W*.7,.5,.75,2]]) { const m = standingStoneMesh('menhir', W*wf, H*hf, W*wf*.8, o.id+st); m.position.x = x; m.position.z = z; m.rotation.y = st*1.3; g.add(m); }
+      break; }
+    case 'steppers': { const n=Math.round(p.n), sd=hashStr(o.id);
+      for (let i=0;i<n;i++){ const geo = noisyStone(new THREE.CylinderGeometry(p.w/2, p.w/2*1.04, .06, 14, 1), sd+i, .07); const m = new THREE.Mesh(geo, stoneMat('step'));
+        m.position.set(((sd+i*37)%7-3)*.02, .03, (i-(n-1)/2)*p.gap); m.rotation.y = i*.9; m.castShadow = m.receiveShadow = true; g.add(m); }
+      break; }
     case 'wall': {
       if (p.mat==='hedge'){ const m = box(p.w,p.h,p.d,crownMat('hedge'),0,p.h/2,0); m.scale.set(.96,.97,.85); g.add(m);
         // shell of leaf cards so the hedge reads as foliage, not a box
@@ -1383,6 +1525,7 @@ function rebuildObject(o){
   const g = buildObject(o); applyColors(g, o); meshById.set(o.id, g); objectsGroup.add(g); placeMesh(o);
 }
 function rebuildAll(){
+  syncKinds(); if (typeof renderPlantGrid==='function') renderPlantGrid();
   for (const g of meshById.values()){ objectsGroup.remove(g); }
   meshById.clear();
   buildTerrain(); scheduleGrass();
@@ -1478,7 +1621,7 @@ function setMode(m){
   if (ui.edit && m!==ui._lastMode) bt.click();
   document.querySelectorAll('#tab-garden input[type=range], #d-reset, #d-import, label[for=d-import]').forEach(el=>{ el.toggleAttribute('disabled', !ui.edit); if (el.tagName==='LABEL') el.hidden = !ui.edit; });
   document.getElementById('d-reset').hidden = !ui.edit;
-  if (!ui.edit){ select(null); if (drag){ drag=null; setControlsForView(); } }
+  if (!ui.edit){ select(null); if (drag){ drag=null; setControlsForView(); } if (brush.on) setBrush(false); }
   setStatus(null); ui._lastMode = m;
   try{ localStorage.setItem(STORE_KEY+'-mode', m); }catch(e){}
 }
@@ -1494,7 +1637,7 @@ function renderProps(){
   h += `<div class="prow"><label for="p-state">Status</label><select id="p-state"><option value="existing"${o.state==='existing'?' selected':''}>Existing</option><option value="proposed"${o.state==='proposed'?' selected':''}>Proposed</option></select></div>`;
   for (const f of T.f){
     if (typeof f[2]==='object'){ h += `<div class="prow"><label for="p-${f[0]}">${f[1]}</label><select id="p-${f[0]}" data-k="${f[0]}">${Object.entries(f[2]).map(([k,v])=>`<option value="${k}"${o.p[f[0]]===k?' selected':''}>${v.label||v}</option>`).join('')}</select></div>`; }
-    else h += num(f[0], f[1]+' (m)', f[2], f[3], f[4], o.p[f[0]]);
+    else h += num(f[0], f[1]+(f[5]===''?'':' (m)'), f[2], f[3], f[4], o.p[f[0]]);
   }
   h += num('rot','Rotation (°)',-180,180,1,o.rot||0);
   h += num('dz','Raise / lower (m)',-2,3,.05,o.dz||0);
@@ -1576,6 +1719,7 @@ canvas.addEventListener('pointerdown', e=>{
   if (e.button!==0) return;
   setNDC(e);
   if (ui.measuring || !ui.edit) return;
+  if (brush.on && brush.target){ brush.stroke = {n:0, last:null}; controls.enabled=false; ocontrols.enabled=false; canvas.setPointerCapture(e.pointerId); const pt = brushPoint(); if (pt) brushStamp(pt); return; }
   const hit = pickObject();
   if (hit){
     const o = getObj(hit.id);
@@ -1587,6 +1731,7 @@ canvas.addEventListener('pointerdown', e=>{
 canvas.addEventListener('pointermove', e=>{
   trackPointerForDog(e);
   if (walk.on && walk.look){ walk.yaw = walk.look.yaw - (e.clientX-walk.look.x)*.005; walk.pitch = THREE.MathUtils.clamp(walk.look.pitch - (e.clientY-walk.look.y)*.004, -1.2, 1.2); return; }
+  if (brush.on && ui.edit){ setNDC(e); const pt = brushPoint(); brushRing.visible = !!pt && !!brush.target; if (pt){ brushRing.position.set(pt.x, pt.y+.03, pt.z); brushRing.scale.setScalar(brushSpacing()/2); } if (brush.stroke){ if (pt) brushStamp(pt); return; } }
   if (!drag) return;
   setNDC(e); const gp = groundPoint(drag.base); if (!gp) return;
   let nx = gp.x+drag.dx, ny = gp.z+drag.dy;
@@ -1597,6 +1742,7 @@ canvas.addEventListener('pointermove', e=>{
 });
 canvas.addEventListener('pointerup', e=>{
   if (walk.on){ walk.look=null; return; }
+  if (brush.stroke){ const n = brush.stroke.n; brush.stroke = null; down = null; setControlsForView(); if (n){ pushHistory(); setStatus(`Placed ${n} × ${brush.target.name}. Keep painting, or Esc to stop the brush.`); } return; }
   if (drag){ if (drag.moved){ placeMesh(drag.o); pushHistory(); } drag=null; setControlsForView(); return; }
   if (!down) return;
   const moved = Math.hypot(e.clientX-down.x, e.clientY-down.y) > 6; down=null;
@@ -1615,6 +1761,7 @@ addEventListener('keydown', e=>{
   const o = getObj(ui.selected);
   if (o && (e.key==='Delete'||e.key==='Backspace')){ removeObj(o.id); return; }
   if (o && (e.key==='q'||e.key==='e') && !walk.on){ o.rot = ((o.rot||0) + (e.key==='q'?-15:15)); if (o.rot>180) o.rot-=360; if (o.rot<-180) o.rot+=360; placeOrRebuild(o,true); renderProps(); pushHistory(); return; }
+  if (e.key==='Escape' && brush.on){ setBrush(false); return; }
   if (e.key==='Escape'){ select(null); if (ui.measuring) toggleMeasure(); if (walk.on) setView('aerial'); }
   walk.keys[e.key.toLowerCase()] = true;
 });
@@ -1772,21 +1919,110 @@ function focusOn(o){ // bring a newly added item into view, keeping the current 
   else { const delta = tgt.clone().sub(c.target); c.target.add(delta); camera.position.add(delta); if (ortho.zoom < .6){ ortho.zoom = .6; ortho.updateProjectionMatrix(); } }
   c.update();
 }
+function addItem(n, t, p){
+  ndc.set(0,0); ray.setFromCamera(ndc, camera); let gp = groundPoint(state.garden.low) || V(-8,0,5);
+  if (!pip([gp.x,gp.z], PLOT) || polyDist(rectFP({x:gp.x,y:gp.z,rot:0}, p.w||p.crown||2, p.d||p.w||p.crown||2), GF_POLY) < .3) gp = V(-9,0,5); // keep new items on the plot and off the house
+  const o = {id:uid(), type:t, name:n, state:'proposed', x:Math.round(gp.x*10)/10, y:Math.round(gp.z*10)/10, rot:0, dz:0, p:JSON.parse(JSON.stringify(p)), note:''};
+  if (ui.layers.proposed===false){ ui.layers.proposed = true; renderLayers(); applyLayers(); }
+  state.objects.push(o); rebuildObject(o); if (TYPES[t].hole) buildTerrainAndPlace(); select(o.id); pushHistory();
+  focusOn(o);
+  setStatus(`Added ${n}. Drag it into place, or type its position in the panel.`);
+  if (innerWidth<=760) document.getElementById('panel').classList.add('collapsed');
+}
+/* brush: paint many plants or stones by clicking or dragging on the ground */
+const brush = {on:false, target:null, stroke:null, spacing:1};
+const brushRing = new THREE.Mesh(new THREE.RingGeometry(.92,1,48), new THREE.MeshBasicMaterial({color:0xc26a2e, transparent:true, opacity:.85, depthTest:false}));
+brushRing.rotation.x = -Math.PI/2; brushRing.renderOrder = 10; brushRing.visible = false; scene.add(brushRing);
+function brushSpacing(){ const p = brush.target?.p || {}; return Math.max(.25, (p.crown || (p.w&&p.d ? Math.max(p.w,p.d) : p.w) || 1) * .85 * brush.spacing); }
+function brushPoint(){ const hit = ray.intersectObjects(terrainGroup.children, false)[0]; return hit && pip([hit.point.x, hit.point.z], PLOT) ? hit.point : null; }
+function brushStamp(pt){
+  const st = brush.stroke, t = brush.target, gap = brushSpacing();
+  if (st.last && Math.hypot(st.last.x-pt.x, st.last.z-pt.z) < gap) return;
+  st.last = pt.clone();
+  if (state.objects.some(o=>o.type===t.type && Math.hypot(o.x-pt.x, o.y-pt.z) < gap*.7)) return; // don't stack on a neighbour
+  if (polyDist(rectFP({x:pt.x,y:pt.z,rot:0}, .3, .3), GF_POLY) < .2) return;
+  const sc = .85 + Math.random()*.3, p = JSON.parse(JSON.stringify(t.p));
+  for (const k of ['h','crown','w','d']) if (typeof p[k]==='number') p[k] = +(p[k]*sc).toFixed(2);
+  const o = {id:uid(), type:t.type, name:t.name, state:'proposed', x:+pt.x.toFixed(2), y:+pt.z.toFixed(2), rot:Math.round(Math.random()*360-180), dz:0, p, note:''};
+  state.objects.push(o); rebuildObject(o); st.n++;
+}
+function setBrushTarget(t){ brush.target = t; document.getElementById('br-target').textContent = t ? t.name : 'pick a plant or stone below';
+  document.querySelectorAll('#tab-build [data-add],#tab-build [data-pl]').forEach(b=>b.classList.toggle('target', !!t && b.dataset.key===t.key)); }
+function setBrush(on){ brush.on = on; const cb = document.getElementById('br-on'); if (cb) cb.checked = on; document.querySelector('.brushbar')?.classList.toggle('on', on);
+  if (!on) brushRing.visible = false;
+  setStatus(on ? (brush.target ? `Brush: click or drag on the ground to plant ${brush.target.name}. Esc stops.` : 'Brush: pick a plant or stone to paint with.') : null); }
+let plantCat = 'All', plantQuery = '', plantFormOpen = false;
+function plantList(){
+  const L = OLD_KIND_PLANTS.map(([k,l,c,h,cr,sw])=>({kind:k, label:l, cat:c, h, crown:cr, sw}));
+  for (const [id,sp] of Object.entries(SPECIES)) L.push({kind:'sp:'+id, label:sp.label, cat:sp.cat, h:sp.h, crown:sp.crown, sw:(sp.flower?.col||sp.leaf)[0]});
+  for (const [id,sp] of Object.entries(state.garden.plantTypes||{})) L.push({kind:'sp:'+id, label:sp.label, cat:'My plants', h:sp.h, crown:sp.crown, sw:(sp.flower?.col||sp.leaf)[0], custom:id});
+  return L;
+}
+function renderPlantGrid(){
+  const el = document.getElementById('pl-grid'); if (!el) return;
+  const q = plantQuery.trim().toLowerCase();
+  const items = plantList().filter(it=>(plantCat==='All' || it.cat===plantCat) && (!q || it.label.toLowerCase().includes(q) || it.cat.toLowerCase().includes(q)));
+  el.innerHTML = items.length ? items.map(it=>`<button class="pl" data-pl="${it.kind}" data-key="pl|${it.kind}"><span><i class="dot" style="background:#${new THREE.Color(it.sw).getHexString()}"></i>${escapeHtml(it.label)}</span><small>${it.h} m · Ø${it.crown} m</small>${it.custom?`<span class="x" data-delpl="${it.custom}" title="Delete this plant type" role="button" aria-label="Delete ${escapeHtml(it.label)}">✕</span>`:''}</button>`).join('')
+    : `<p style="grid-column:1/-1">${plantCat==='My plants' && !q ? 'No plant types of your own yet. Use “New plant type” to create one.' : 'No plants match.'}</p>`;
+  el.querySelectorAll('[data-pl]').forEach(b=>b.onclick=(e)=>{
+    const del = e.target.closest('[data-delpl]');
+    if (del){ e.stopPropagation(); if (!del.dataset.armed){ del.dataset.armed='1'; del.textContent='Delete?'; setTimeout(()=>{ del.textContent='✕'; delete del.dataset.armed; }, 3000); return; }
+      delete state.garden.plantTypes[del.dataset.delpl]; rebuildAll(); pushHistory(); return; }
+    const it = plantList().find(x=>x.kind===b.dataset.pl), t = {name:it.label, type:'tree', p:{kind:it.kind, h:it.h, crown:it.crown}, key:'pl|'+it.kind};
+    if (brush.on){ setBrushTarget(t); setBrush(true); } else addItem(it.label, 'tree', t.p);
+  });
+  if (brush.target) setBrushTarget(brush.target);
+}
 function renderBuild(){
   const el = document.getElementById('tab-build');
-  el.innerHTML = `<p>Pick an item to drop it in the middle of the view, then drag it into place. Q / E rotate, Delete removes.</p>` +
-    LIBRARY.map(([cat,items])=>`<h3>${cat}</h3><div class="lib">${items.map(([n,t,p,d],i)=>`<button data-add="${cat}|${i}"><span>${n}</span><small>${d}</small></button>`).join('')}</div>`).join('');
+  const formOpts = Object.entries(FORMS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  el.innerHTML = `<p>Pick an item to drop it in the middle of the view, then drag it into place. Q / E rotate, Delete removes.</p>
+    <div class="brushbar${brush.on?' on':''}">
+      <label class="check"><input type="checkbox" id="br-on"${brush.on?' checked':''}> <b>Brush</b>: paint many at once</label>
+      <div class="row"><span style="flex:1;font-size:12.5px;color:var(--muted)">Painting: <b id="br-target" style="color:var(--ink)">pick a plant or stone below</b></span></div>
+      <div class="row"><label for="br-sp">Spacing</label><input type="range" id="br-sp" min=".4" max="2.5" step=".05" value="${brush.spacing}"><output id="br-sp-o">${brush.spacing.toFixed(2)}×</output></div>
+    </div>
+    <h3>Plants</h3>
+    <div class="row"><input type="search" id="pl-q" placeholder="Search plants, e.g. maple, grass" style="flex:1" aria-label="Search plants" value="${escapeHtml(plantQuery)}"></div>
+    <div class="chips" role="group" aria-label="Plant category">${PLANT_CATS.map(c=>`<button data-plcat="${c}" aria-pressed="${c===plantCat}">${c}</button>`).join('')}</div>
+    <div class="lib" id="pl-grid"></div>
+    <div class="btns"><button class="btn" id="pl-new">${plantFormOpen?'Close':'＋ New plant type'}</button></div>
+    <div id="pl-form"${plantFormOpen?'':' hidden'}>
+      <div class="row"><input type="text" id="pf-name" placeholder="Name, e.g. Purple smoke bush" style="flex:1" aria-label="Plant name"></div>
+      <div class="row"><label for="pf-form">Shape</label><select id="pf-form">${formOpts}</select></div>
+      <div class="row"><label for="pf-h">Height (m)</label><input type="number" id="pf-h" min=".1" max="30" step=".1" value="1.5"></div>
+      <div class="row"><label for="pf-w">Width (m)</label><input type="number" id="pf-w" min=".1" max="20" step=".1" value="1.2"></div>
+      <div class="row"><label for="pf-leaf">Leaf colour</label><input type="color" id="pf-leaf" value="#5f8f3d"></div>
+      <label class="check"><input type="checkbox" id="pf-ever"> Evergreen (keeps leaves in winter)</label>
+      <div class="row"><label for="pf-aut"><input type="checkbox" id="pf-aut-on" checked aria-label="Changes colour in autumn"> Autumn colour</label><input type="color" id="pf-aut" value="#d0682c"></div>
+      <div class="row"><label for="pf-fl">Flowers</label><select id="pf-fl"><option value="">None</option><option value="spring">In spring</option><option value="summer">In summer</option><option value="autumn">In autumn</option></select><input type="color" id="pf-flc" value="#e07aa3" aria-label="Flower colour"></div>
+      <div class="btns"><button class="btn primary" id="pf-save">Create plant</button></div>
+      <p class="note">Your plant types are saved with the design, so they also open on other devices.</p>
+    </div>` +
+    LIBRARY.map(([cat,items])=>`<h3>${cat}</h3><div class="lib">${items.map(([n,t,p,d],i)=>`<button data-add="${cat}|${i}" data-key="${cat}|${i}"><span>${n}</span><small>${d}</small></button>`).join('')}</div>`).join('');
   el.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{
     const [cat,i] = b.dataset.add.split('|'); const [n,t,p] = LIBRARY.find(c=>c[0]===cat)[1][+i];
-    ndc.set(0,0); ray.setFromCamera(ndc, camera); let gp = groundPoint(state.garden.low) || V(-8,0,5);
-    if (!pip([gp.x,gp.z], PLOT) || polyDist(rectFP({x:gp.x,y:gp.z,rot:0}, p.w||p.crown||2, p.d||p.w||p.crown||2), GF_POLY) < .3) gp = V(-9,0,5); // keep new items on the plot and off the house
-    const o = {id:uid(), type:t, name:n, state:'proposed', x:Math.round(gp.x*10)/10, y:Math.round(gp.z*10)/10, rot:0, dz:0, p:JSON.parse(JSON.stringify(p)), note:''};
-    if (ui.layers.proposed===false){ ui.layers.proposed = true; renderLayers(); applyLayers(); }
-    state.objects.push(o); rebuildObject(o); if (TYPES[t].hole) buildTerrainAndPlace(); select(o.id); pushHistory();
-    focusOn(o);
-    setStatus(`Added ${n}. Drag it into place, or type its position in the panel.`);
-    if (innerWidth<=760) document.getElementById('panel').classList.add('collapsed');
+    if (brush.on && !TYPES[t].hole){ setBrushTarget({name:n, type:t, p, key:b.dataset.key}); setBrush(true); return; }
+    addItem(n, t, p);
   });
+  el.querySelector('#br-on').onchange = e=>setBrush(e.target.checked);
+  el.querySelector('#br-sp').oninput = e=>{ brush.spacing = +e.target.value; el.querySelector('#br-sp-o').textContent = brush.spacing.toFixed(2)+'×'; };
+  el.querySelector('#pl-q').oninput = e=>{ plantQuery = e.target.value; renderPlantGrid(); };
+  el.querySelectorAll('[data-plcat]').forEach(b=>b.onclick=()=>{ plantCat = b.dataset.plcat; el.querySelectorAll('[data-plcat]').forEach(x=>x.setAttribute('aria-pressed', x===b)); renderPlantGrid(); });
+  el.querySelector('#pl-new').onclick = ()=>{ plantFormOpen = !plantFormOpen; renderBuild(); if (plantFormOpen) document.getElementById('pf-name').focus(); };
+  el.querySelector('#pf-save').onclick = ()=>{
+    const name = el.querySelector('#pf-name').value.trim(); if (!name){ el.querySelector('#pf-name').focus(); setStatus('Give the plant a name first.'); return; }
+    const hex = id=>parseInt(el.querySelector(id).value.slice(1),16), lighter = c=>new THREE.Color(c).lerp(new THREE.Color(0xffffff), .18).getHex();
+    const leaf = hex('#pf-leaf'), form = el.querySelector('#pf-form').value, fl = el.querySelector('#pf-fl').value;
+    const sp = {label:name, cat:'My plants', form, h:Math.max(.1, +el.querySelector('#pf-h').value||1), crown:Math.max(.1, +el.querySelector('#pf-w').value||1), leaf:[leaf, lighter(leaf)], evergreen:el.querySelector('#pf-ever').checked};
+    if (el.querySelector('#pf-aut-on').checked && !sp.evergreen){ const a = hex('#pf-aut'); sp.autumn = [a, lighter(a)]; }
+    if (fl){ const c = hex('#pf-flc'); sp.flower = {season:fl, col:[c, lighter(c)]}; }
+    const id = 'u_'+uid(); state.garden.plantTypes = {...(state.garden.plantTypes||{}), [id]:sp};
+    plantFormOpen = false; plantCat = 'My plants'; plantQuery = ''; syncKinds(); pushHistory(); renderBuild();
+    addItem(name, 'tree', {kind:'sp:'+id, h:sp.h, crown:sp.crown});
+  };
+  renderPlantGrid();
+  if (brush.target) setBrushTarget(brush.target);
 }
 
 /* ---------- garden tab ---------- */
@@ -2013,7 +2249,7 @@ function makeWater(hq, pond){ const att = pond ? 0x46613d : 0x1aa0c6;
   : new THREE.MeshStandardMaterial({color:pond?0x3d5c4a:0x2f8fb3, roughness:.04, metalness:.25, transparent:true, opacity:.85, normalMap:waterNormal, normalScale:new THREE.Vector2(.3,.3)}); }
 
 /* wind-blown grass blades on the lawns */
-const NO_GRASS = new Set(['sauna_cube','boulder','sofa','grill','paving','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','steps','bed','wall','firepit','pillar','carport']);
+const NO_GRASS = new Set(['standing','stonegroup','steppers','sauna_cube','boulder','sofa','grill','paving','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','steps','bed','wall','firepit','pillar','carport']);
 const grassGroup = new THREE.Group(); scene.add(grassGroup);
 const grassMat = windify(new THREE.MeshStandardMaterial({vertexColors:true, side:THREE.DoubleSide, roughness:.85}), .045, 'grass');
 let grassTimer = null;
@@ -2265,7 +2501,7 @@ ball.castShadow = true; ball.visible = false; scene.add(ball);
 const dog = {x:-6.5, y:3.2, yaw:Math.PI, h:0, speed:0, phase:0, state:'wander', target:null, timer:2, wag:.3, look:null, sit:0, sniff:0, hop:0, bubble:'', bubbleUntil:0, carrying:false};
 const pointer = {x:0, y:0, t:-1e9, vx:0, vy:0};
 const ballSt = {flying:false, t:0, dur:1, a:null, b:null, onGround:false};
-const DOG_BLOCK = new Set(['sauna_cube','sofa','grill','boulder','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','wall','bed','steps','pillar','carport']);
+const DOG_BLOCK = new Set(['standing','stonegroup','sauna_cube','sofa','grill','boulder','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','wall','bed','steps','pillar','carport']);
 function dogFree(x,y){
   if (!pip([x,y], PLOT)) return false;
   if (pip([x,y], insetPoly(GF_POLY,-.35))) return false;

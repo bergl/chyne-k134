@@ -178,6 +178,7 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
       <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
       <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
       <button id="measure" aria-pressed="false" title="Click two points to measure">Measure</button>
+      <button id="snow" aria-pressed="false" title="Snowfall, snow cover and a snowman">❄ Snow</button>
       <button id="photo" aria-pressed="false" title="Render a clean, high-quality still of the current view">Photo</button>
       <button id="toggleTools">Tools</button>
     </div>
@@ -431,6 +432,7 @@ const TYPES = {
   boulder:{f:[['w','Size',.3,2,.05]]},
   standing:{f:[['style','Type',STONE_STYLES],['w','Width',.15,2,.05],['d','Thickness',.1,1.5,.05],['h','Height',.3,4,.05]]},
   stonegroup:{f:[['h','Tallest stone',.5,3.5,.05],['w','Stone width',.2,1.2,.05]]},
+  snowman:{f:[['h','Height',.6,2.5,.05]]},
   steppers:{f:[['n','Number of stones',2,16,1,''],['gap','Spacing',.4,1.2,.05],['w','Stone size',.3,.9,.05]]}, timberframe:{f:[['w','Width',1,5,.1],['d','Depth',.1,3,.1],['h','Height',1.5,3,.05]]},
   tableset:{f:[['w','Table length',.8,3,.1]]}, umbrella:{f:[['w','Diameter',2,4,.1]]},
   trampoline:{f:[['w','Diameter',2,5,.1]]}, firepit:{f:[['w','Diameter',.6,1.6,.05]]},
@@ -472,6 +474,8 @@ const LIBRARY = [
     ['Basalt column','standing',{style:'column',w:.35,d:.35,h:1.2},'1.2 m'],
     ['Stone group','stonegroup',{h:1.5,w:.5},'3 stones'],
     ['Stepping stones','steppers',{n:5,gap:.65,w:.5},'5 stones']]],
+  ['Winter',[
+    ['Snowman','snowman',{h:1.5},'1.5 m']]],
   ['Beds & hedges',[
     ['Hedge','wall',{mat:'hedge',w:5,d:.8,h:1.6},'5 m'],
     ['Raised bed','bed',{w:2,d:1,h:.4},'2 × 1 m']]],
@@ -1026,6 +1030,7 @@ function footprint(o){
     case 'standing': return rectFP(o, p.w, p.d);
     case 'stonegroup': return ellipseFP(o, p.w*3.2, p.w*2.4, 12);
     case 'steppers': return rectFP(o, p.w, p.n*p.gap);
+    case 'snowman': return ellipseFP(o, p.h*.45, p.h*.45, 14);
     case 'paving': if (p.shape==='oval' || p.shape==='organic'){ const r=o.rot*Math.PI/180, c=Math.cos(r), sn=Math.sin(r); return shapeLocal(p, o.id).map(([lx,lz])=>[o.x+lx*c+lz*sn, o.y-lx*sn+lz*c]); } return rectFP(o, p.w, p.d);
     case 'timberframe': return rectFP(o, p.w, Math.max(.2,p.d));
     case 'tableset': return rectFP(o, (p.w||1.6)+1.0, 1.9);
@@ -1314,6 +1319,7 @@ function buildObject(o){
       if (p.shape==='oval' || p.shape==='organic'){ const loc = shapeLocal(p, o.id); const m = slab(loc, 0, p.h, pm); const uv=m.geometry.attributes.uv; for (let i=0;i<uv.count;i++) uv.setXY(i, uv.getX(i)/ts, uv.getY(i)/ts); uv.needsUpdate=true; g.add(m); gravelScatter(g, p, loc, o.id); }
       else { const m = box(p.w, p.h, p.d, pm, 0, p.h/2, 0); fitUV(m.geometry, p.w, p.d, ts); g.add(m); gravelScatter(g, p, null, o.id); }
       break; }
+    case 'snowman': g.add(makeSnowman(p.h, o.id)); break;
     case 'standing': g.add(standingStoneMesh(p.style||'menhir', p.w, p.h, p.d, o.id)); break;
     case 'stonegroup': { const H=p.h, W=p.w;
       for (const [x,z,hf,wf,st] of [[0,0,1,1,0],[W*1.1,W*.55,.72,.85,1],[-W*.95,W*.7,.5,.75,2]]) { const m = standingStoneMesh('menhir', W*wf, H*hf, W*wf*.8, o.id+st); m.position.x = x; m.position.z = z; m.rotation.y = st*1.3; g.add(m); }
@@ -1558,9 +1564,9 @@ function updateSun(){
   const dir = V(Math.cos(alt)*Math.cos(phi), Math.sin(alt), Math.cos(alt)*Math.sin(phi));
   sun.position.copy(sun.target.position).addScaledVector(dir, 120);
   const day = THREE.MathUtils.clamp(sp.alt/12, 0, 1), dusk = THREE.MathUtils.clamp(sp.alt/4+.25, 0, 1);
-  sun.intensity = 2.8*day; sun.visible = sp.alt > -1;
+  sun.intensity = 2.8*day*(1-.6*snow.level); sun.visible = sp.alt > -1;
   sun.color.setHSL(.09, .6*(1-day)+.15, .62+.25*day);
-  hemi.intensity = (.25 + .95*dusk) * .35;
+  hemi.intensity = (.25 + .95*dusk) * (.35 + .45*snow.level);
   envGround.material.color.setRGB(.33,.38,.27).multiplyScalar(.15+.85*dusk);
   envDirty = true; reflDirty = true;
   const warm = THREE.MathUtils.clamp(1-sp.alt/15, 0, 1), night = THREE.MathUtils.clamp(-sp.alt/8, 0, 1);
@@ -1568,6 +1574,7 @@ function updateSun(){
   U.top.value.copy(SKY.dayTop).lerp(SKY.setTop, warm).lerp(SKY.nightTop, night);
   U.horizon.value.copy(SKY.dayHor).lerp(SKY.setHor, warm*(1-night)).lerp(SKY.nightHor, night);
   U.sunDir.value.copy(dir); U.sunCol.value.set(1,.92,.75).lerp(new THREE.Color(1,.55,.25), warm).multiplyScalar(sp.alt>-2 ? 1 : 0);
+  if (snow.level){ const grey = new THREE.Color(.62,.66,.7).multiplyScalar(.35+.65*dusk); U.top.value.lerp(grey, .75*snow.level); U.horizon.value.lerp(grey.clone().multiplyScalar(1.12), .8*snow.level); U.sunCol.value.multiplyScalar(1-.85*snow.level); }
   scene.background.copy(U.horizon.value); scene.fog.color.copy(U.horizon.value);
   const cc = new THREE.Color(1,1,1).lerp(new THREE.Color(1,.72,.55), warm*.7).multiplyScalar(.25+.75*dusk);
   for (const c of clouds.children) c.material.color.copy(cc);
@@ -2501,7 +2508,7 @@ ball.castShadow = true; ball.visible = false; scene.add(ball);
 const dog = {x:-6.5, y:3.2, yaw:Math.PI, h:0, speed:0, phase:0, state:'wander', target:null, timer:2, wag:.3, look:null, sit:0, sniff:0, hop:0, bubble:'', bubbleUntil:0, carrying:false};
 const pointer = {x:0, y:0, t:-1e9, vx:0, vy:0};
 const ballSt = {flying:false, t:0, dur:1, a:null, b:null, onGround:false};
-const DOG_BLOCK = new Set(['standing','stonegroup','sauna_cube','sofa','grill','boulder','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','wall','bed','steps','pillar','carport']);
+const DOG_BLOCK = new Set(['snowman','standing','stonegroup','sauna_cube','sofa','grill','boulder','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','wall','bed','steps','pillar','carport']);
 function dogFree(x,y){
   if (!pip([x,y], PLOT)) return false;
   if (pip([x,y], insetPoly(GF_POLY,-.35))) return false;
@@ -2679,6 +2686,96 @@ function updateSwimmer(dt, now){
     const k = entry < .9 ? 1 - entry/.9 : 0; m.position.set(.7, .06, i ? -.2 : .2); m.scale.setScalar(.5 + (1-k)*1.2); m.material.opacity = k*.75; }
 }
 
+/* ================= SNOW MODE: falling flakes, settling snow cover, a snowman ================= */
+const snow = {on:false, level:0, cover:0, prevSeason:null, t:0};
+const snowU = {uSnow:{value:0}};
+function snowify(m){ // whiten upward-facing surfaces of any standard material, on top of its existing shader tweaks
+  if (m.userData.snowed || !m.isMeshStandardMaterial) return; m.userData.snowed = true;
+  const prev = m.onBeforeCompile, prevKey = m.customProgramCacheKey;
+  m.onBeforeCompile = (sh, r)=>{ if (prev) prev.call(m, sh, r); sh.uniforms.uSnow = snowU.uSnow;
+    sh.vertexShader = 'varying vec3 vSnowN;\nvarying vec3 vSnowP;\n' + sh.vertexShader.replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n  vSnowN = normalize(mat3(modelMatrix) * objectNormal);')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n  vSnowP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = 'uniform float uSnow;\nvarying vec3 vSnowN;\nvarying vec3 vSnowP;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+      float snowPatch = 0.5 + 0.25*sin(vSnowP.x*1.7)*sin(vSnowP.z*1.3) + 0.15*sin(vSnowP.x*5.1 + vSnowP.z*4.3);
+      float snowAmt = smoothstep(0.45, 0.85, normalize(vSnowN).y) * smoothstep(0.0, 0.35, uSnow*1.35 - (1.0-snowPatch)*0.6);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.93, 0.95, 0.98), snowAmt);`);
+  };
+  m.customProgramCacheKey = ()=> (prevKey ? prevKey.call(m) : '') + '|snow';
+  m.needsUpdate = true;
+}
+let snowSweep = 0;
+function snowifyScene(){ scene.traverse(o=>{ if (o.isMesh || o.isInstancedMesh){ const ms = Array.isArray(o.material) ? o.material : [o.material]; for (const m of ms) if (m && m!==mat.glass && m!==mat.water && m!==mat.pond && !m.transparent) snowify(m); } }); }
+// falling flakes: positions wrap inside a box that follows the camera target, animated on the GPU
+const FLAKES = 9000;
+const flakeGeo = new THREE.BufferGeometry(), fp = new Float32Array(FLAKES*3), fr = new Float32Array(FLAKES);
+for (let i=0;i<FLAKES;i++){ fp[i*3]=Math.random()*60; fp[i*3+1]=Math.random()*28; fp[i*3+2]=Math.random()*60; fr[i]=Math.random(); }
+flakeGeo.setAttribute('position', new THREE.BufferAttribute(fp,3)); flakeGeo.setAttribute('aRnd', new THREE.BufferAttribute(fr,1));
+const flakes = new THREE.Points(flakeGeo, new THREE.ShaderMaterial({ transparent:true, depthWrite:false, fog:false,
+  uniforms:{uTime:{value:0}, uOrigin:{value:V()}, uWind:windU.uWind, uAlpha:{value:0}, uScale:{value:600}},
+  vertexShader:`attribute float aRnd; uniform float uTime; uniform vec3 uOrigin; uniform float uWind; uniform float uScale; varying float vA;
+    void main(){ vec3 p = position;
+      p.y = mod(p.y - uTime*(0.7 + aRnd*0.6), 28.0);
+      p.x = mod(p.x + uTime*(0.3 + uWind*2.4) + sin(uTime*0.9 + aRnd*40.0)*0.6, 60.0);
+      p.z = mod(p.z + cos(uTime*0.7 + aRnd*25.0)*0.5, 60.0);
+      vec4 mv = modelViewMatrix * vec4(uOrigin + p - vec3(30.0, 2.0, 30.0), 1.0);
+      gl_Position = projectionMatrix * mv; gl_PointSize = (0.035 + aRnd*0.045) * uScale / -mv.z; vA = 0.6 + aRnd*0.4; }`,
+  fragmentShader:`uniform float uAlpha; varying float vA; void main(){ float d = length(gl_PointCoord - 0.5); if (d > 0.5) discard; gl_FragColor = vec4(1.0, 1.0, 1.0, (1.0 - d*2.0) * vA * uAlpha); }` }));
+flakes.frustumCulled = false; flakes.visible = false; scene.add(flakes);
+// snowman
+const snowMat = M({color:0xf3f5f8, roughness:.92}); snowMat.userData.part = 'Snow';
+const coalMat = M({color:0x151515, roughness:.6}); coalMat.userData.part = 'Coal';
+const carrotMat = M({color:0xe8701e, roughness:.6}); carrotMat.userData.part = 'Carrot';
+const scarfMat = M({color:0xb3202e, roughness:.85}); scarfMat.userData.part = 'Scarf';
+const hatMat = M({color:0x1c1c1e, roughness:.5}); hatMat.userData.part = 'Hat';
+function makeSnowman(h, seedStr){
+  const g = new THREE.Group(), u = h/1.5, sd = hashStr(seedStr||'s');
+  const ball = (r,y)=>{ const geo = new THREE.IcosahedronGeometry(r, 3), pa = geo.attributes.position;
+    for (let i=0;i<pa.count;i++){ const f = 1 + .035*Math.sin(pa.getX(i)*9+sd)*Math.sin(pa.getY(i)*8+sd*.3)*Math.sin(pa.getZ(i)*7); pa.setXYZ(i, pa.getX(i)*f, pa.getY(i)*f*.94, pa.getZ(i)*f); }
+    geo.computeVertexNormals(); const m = new THREE.Mesh(geo, snowMat); m.position.y = y; g.add(m); return m; };
+  ball(.36*u, .3*u); ball(.26*u, .78*u); const head = ball(.18*u, 1.16*u);
+  for (const z of [-.06,.06]){ const e = new THREE.Mesh(new THREE.SphereGeometry(.022*u,8,6), coalMat); e.position.set(.16*u, 1.2*u, z*u); g.add(e); }
+  for (let i=0;i<5;i++){ const a=(i-2)*.32, mo = new THREE.Mesh(new THREE.SphereGeometry(.014*u,6,5), coalMat); mo.position.set(Math.cos(a)*.165*u, 1.09*u + Math.abs(i-2)*.012*u, Math.sin(a)*.1*u); g.add(mo); }
+  for (const y of [.62,.78,.94]){ const bt = new THREE.Mesh(new THREE.SphereGeometry(.024*u,8,6), coalMat); bt.position.set(.25*u*Math.cos((y-.78)*1.6), y*u, 0); g.add(bt); }
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(.03*u,.18*u,10), carrotMat); nose.rotation.z = -Math.PI/2; nose.position.set(.26*u, 1.15*u, 0); g.add(nose);
+  for (const sg of [-1,1]){ const arm = new THREE.Mesh(new THREE.CylinderGeometry(.008*u,.016*u,.55*u,5), mat.trunk); arm.position.set(0, .92*u, sg*.42*u); arm.rotation.x = sg*-1.05; arm.rotation.z = .2; g.add(arm);
+    const tw = new THREE.Mesh(new THREE.CylinderGeometry(.005*u,.008*u,.14*u,4), mat.trunk); tw.position.set(.02*u, 1.06*u, sg*.6*u); tw.rotation.x = sg*-.4; g.add(tw); }
+  const scarf = new THREE.Mesh(new THREE.TorusGeometry(.165*u,.035*u,8,24), scarfMat); scarf.rotation.x = Math.PI/2; scarf.position.y = 1.0*u; g.add(scarf);
+  const tail = box(.07*u,.26*u,.025*u, scarfMat, -.06*u, .88*u, .15*u); tail.rotation.x = .25; g.add(tail);
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(.2*u,.2*u,.02*u,24), hatMat); brim.position.y = 1.31*u; g.add(brim);
+  const crown = new THREE.Mesh(new THREE.CylinderGeometry(.13*u,.13*u,.22*u,24), hatMat); crown.position.y = 1.43*u; g.add(crown);
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(.132*u,.132*u,.04*u,24), scarfMat); band.position.y = 1.35*u; g.add(band);
+  g.rotation.y = -.4; g.traverse(m=>{ if (m.isMesh){ m.castShadow = true; m.receiveShadow = true; } });
+  return g;
+}
+const snowmanDeco = makeSnowman(1.5, 'deco'); snowmanDeco.position.set(-8.6, 0, 4.4); snowmanDeco.rotation.y = .5; snowmanDeco.visible = false; scene.add(snowmanDeco);
+const snowBtn = document.getElementById('snow');
+function setSnow(on){
+  snow.on = on; snowBtn.setAttribute('aria-pressed', on);
+  const want = on ? 'winter' : (snow.prevSeason || ui.season);
+  if (on) snow.prevSeason = ui.season;
+  if (ui.season !== want) document.querySelector(`[data-season="${want}"]`)?.click();
+  if (on){ snowifyScene(); flakes.visible = true; }
+  setStatus(on ? 'Snow mode: it is snowing and the garden is turning white. Click ❄ Snow again to stop.' : null);
+  try { localStorage.setItem(STORE_KEY+'-snow', on ? 'on' : 'off'); } catch(e){}
+}
+snowBtn.onclick = ()=>setSnow(!snow.on);
+function updateSnow(dt, now){
+  const target = snow.on ? 1 : 0;
+  if (snow.level !== target){ snow.level = THREE.MathUtils.clamp(snow.level + (target ? dt/2.5 : -dt/1.5), 0, 1); updateSun(); }
+  // snow settles slowly while it falls and melts faster when the mode is switched off
+  snow.cover = THREE.MathUtils.clamp(snow.cover + (snow.on ? dt/9 : -dt/3), 0, 1); snowU.uSnow.value = snow.cover;
+  if (!photo) snow.t += dt;
+  flakes.visible = snow.level > 0.01; flakes.material.uniforms.uAlpha.value = snow.level; flakes.material.uniforms.uTime.value = snow.t;
+  flakes.material.uniforms.uScale.value = renderer.domElement.height * .9;
+  flakes.material.uniforms.uOrigin.value.copy(camera===ortho ? ocontrols.target : controls.target);
+  if (snow.cover > 0 && now - snowSweep > 1500){ snowSweep = now; snowifyScene(); } // pick up items added since
+  grassGroup.visible = ui.layers.grass!==false && snow.cover < .45;
+  const hasOwn = state.objects.some(o=>o.type==='snowman' && visibleObj(o));
+  snowmanDeco.visible = snow.cover > .3 && !hasOwn;
+  if (snowmanDeco.visible) snowmanDeco.position.y = levelAt(snowmanDeco.position.x, snowmanDeco.position.z);
+}
+try { if (localStorage.getItem(STORE_KEY+'-snow') === 'on') setTimeout(()=>setSnow(true), 0); } catch(e){}
+
 function renderFrame(){
   if (photo){ if (photo.kind==='pt') photo.pt.renderSample(); else accumStep(); return; }
   if (composer) composer.render(); else renderer.render(scene, camera);
@@ -2697,6 +2794,7 @@ function loop(now){
   const dt = Math.min(.05, (now-last)/1000); last = now;
   if (playing){ sunUI.time += dt*1.2; if (sunUI.time>21.5){ sunUI.time=21.5; playing=false; document.getElementById('s-play').textContent='Play day'; } sTime.value=sunUI.time; updateSun(); }
   sky.position.copy(camera.position);
+  updateSnow(dt, now);
   if (!photo) for (const c of clouds.children){ c.position.x += c.userData.speed*dt; if (c.position.x > 1800) c.position.x -= 3600; }
   if (camera===persp && !walk.on) controls.update(); if (camera===ortho) ocontrols.update();
   updateWalk(dt);

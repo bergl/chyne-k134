@@ -8,8 +8,6 @@
 <body>
 <title>Chýně K-134 Garden Studio</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 /* Layout: full-bleed 3D canvas; drafting-sheet toolbar on top, tool sheet left, selection card right (bottom sheets on phones). */
 :root{
@@ -163,6 +161,250 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
   #compass{bottom:auto;top:var(--bar-bottom,calc(110px + env(safe-area-inset-top,0px)));width:48px;height:48px}
 }
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+
+/* ==================== Liquid glass ====================
+   Translucent, blurred and saturated surfaces with a light rim, a pointer-following sheen,
+   capsule shapes, spring motion and a liquid selection indicator. Overrides the base styles above. */
+:root{
+  --glass: rgba(255,255,255,.24); --glass-strong: rgba(248,251,249,.5); --glass-edge: rgba(255,255,255,.62);
+  --glass-rim: rgba(255,255,255,.85); --glass-rim2: rgba(255,255,255,.16); --glass-sheen: rgba(255,255,255,.42);
+  --glass-shadow: 0 12px 32px -10px rgba(14,34,24,.32), 0 2px 8px rgba(14,34,24,.10);
+  --glass-filter: blur(20px) saturate(190%) brightness(1.06);
+  --inset: rgba(255,255,255,.36); --inset-hover: rgba(255,255,255,.58); --inset-line: rgba(16,36,26,.10);
+  --ind: rgba(255,255,255,.86); --ind-shadow: 0 3px 12px -2px rgba(14,34,24,.22);
+  --track: rgba(118,124,122,.26); --hover: rgba(255,255,255,.32);
+  --panel: var(--glass); --chip: var(--inset); --line: rgba(16,36,26,.12);
+  --ink:#0e1d17; --muted:#4a5a53; --accent:#2b8a5c; --accent-ink:#fff; --proposed:#d06a24;
+  --spring: cubic-bezier(.2,1.3,.32,1); --spring-soft: cubic-bezier(.22,1.12,.36,1); --ease: cubic-bezier(.25,.8,.25,1);
+  --f-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  --f-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", Roboto, system-ui, sans-serif;
+  --f-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --r: 14px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --glass: rgba(26,30,28,.36); --glass-strong: rgba(20,24,22,.58); --glass-edge: rgba(255,255,255,.2);
+  --glass-rim: rgba(255,255,255,.38); --glass-rim2: rgba(255,255,255,.05); --glass-sheen: rgba(255,255,255,.14);
+  --glass-shadow: 0 14px 36px -10px rgba(0,0,0,.6), 0 2px 8px rgba(0,0,0,.3);
+  --glass-filter: blur(22px) saturate(170%) brightness(.88);
+  --inset: rgba(255,255,255,.07); --inset-hover: rgba(255,255,255,.13); --inset-line: rgba(255,255,255,.06);
+  --ind: rgba(255,255,255,.2); --ind-shadow: 0 3px 12px -2px rgba(0,0,0,.45);
+  --track: rgba(255,255,255,.16); --hover: rgba(255,255,255,.09);
+  --line: rgba(255,255,255,.11); --ink:#eef4f0; --muted:#a6b5ad; --accent:#5fd197; --accent-ink:#06150d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --glass: rgba(26,30,28,.36); --glass-strong: rgba(20,24,22,.58); --glass-edge: rgba(255,255,255,.2);
+  --glass-rim: rgba(255,255,255,.38); --glass-rim2: rgba(255,255,255,.05); --glass-sheen: rgba(255,255,255,.14);
+  --glass-shadow: 0 14px 36px -10px rgba(0,0,0,.6), 0 2px 8px rgba(0,0,0,.3);
+  --glass-filter: blur(22px) saturate(170%) brightness(.88);
+  --inset: rgba(255,255,255,.07); --inset-hover: rgba(255,255,255,.13); --inset-line: rgba(255,255,255,.06);
+  --ind: rgba(255,255,255,.2); --ind-shadow: 0 3px 12px -2px rgba(0,0,0,.45);
+  --track: rgba(255,255,255,.16); --hover: rgba(255,255,255,.09);
+  --line: rgba(255,255,255,.11); --ink:#eef4f0; --muted:#a6b5ad; --accent:#5fd197; --accent-ink:#06150d; color-scheme:dark}
+body{font-family:var(--f-body);-webkit-font-smoothing:antialiased;letter-spacing:-.005em}
+
+/* --- glass surfaces --- */
+.brand,.selbox,.switch,.bar .seg,#panel,#props,#status,#roomcard,#savetoast,#walkpad .btn,#photobar .btn{
+  background:var(--glass); -webkit-backdrop-filter:var(--glass-filter); backdrop-filter:var(--glass-filter);
+  border:0; box-shadow:var(--glass-shadow), inset 0 1px 0 var(--glass-edge), inset 0 -1px 0 rgba(255,255,255,.06);
+  isolation:isolate; color:var(--ink)}
+.brand,.selbox,.switch,.bar .seg{position:relative}
+#panel,#props{background:var(--glass-strong)}
+/* light rim: a 1px gradient ring, brighter at the top-left and bottom-right like light caught on glass */
+.brand::before,.selbox::before,.switch::before,.bar .seg::before,#panel::before,#props::before,#status::before,#roomcard::before,#savetoast::before{
+  content:""; position:absolute; inset:0; border-radius:inherit; padding:1px; pointer-events:none; z-index:3;
+  background:linear-gradient(145deg, var(--glass-rim) 0%, var(--glass-rim2) 28%, transparent 52%, var(--glass-rim2) 76%, var(--glass-rim) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite:exclude}
+/* sheen that follows the pointer, sitting behind the content */
+.brand::after,.selbox::after,.switch::after,.bar .seg::after,#panel::after,#props::after,#status::after{
+  content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:-1; opacity:0; transition:opacity .45s var(--ease);
+  background:radial-gradient(180px circle at var(--mx,50%) var(--my,0%), var(--glass-sheen), transparent 65%)}
+#panel::after,#props::after{background:radial-gradient(320px circle at var(--mx,50%) var(--my,0%), var(--glass-sheen), transparent 60%)}
+.brand:hover::after,.selbox:hover::after,.switch:hover::after,.bar .seg:hover::after,#panel:hover::after,#props:hover::after,#status:hover::after{opacity:1}
+
+/* --- top bar --- */
+.bar{gap:10px}
+.bar > *{animation:barIn .8s var(--spring-soft) backwards}
+.bar > *:nth-child(2){animation-delay:.05s} .bar > *:nth-child(3){animation-delay:.1s} .bar > *:nth-child(4){animation-delay:.15s} .bar > *:nth-child(5){animation-delay:.2s}
+@keyframes barIn{from{opacity:0; transform:translateY(-14px) scale(.92)}}
+.brand{border-radius:20px; padding:7px 16px 8px}
+.brand b{font-family:var(--f-display); font-weight:700; font-size:18px; letter-spacing:-.02em}
+.brand span{font-size:10.5px; letter-spacing:.04em; color:var(--muted)}
+.selbox{border-radius:99px; padding-left:4px; transition:transform .4s var(--spring)}
+.selbox:active{transform:scale(.96)}
+.selbox .lbl{font-size:10.5px; letter-spacing:.06em; color:var(--muted); padding-left:10px; font-weight:600}
+.selbox select{color:var(--ink); font-weight:600; padding:9px 30px 9px 7px; border-radius:99px; font-size:13.5px}
+.selbox select:hover{background-color:var(--hover)}
+.selbox select option{background:Canvas; color:CanvasText}
+.bar .seg{border-radius:99px; padding:3px; gap:2px; overflow:visible}
+.bar .seg button{border:0 !important; border-radius:99px; padding:7px 13px; font-weight:550; font-size:13px; color:var(--ink);
+  transition:background-color .3s var(--ease), color .2s, transform .45s var(--spring), box-shadow .3s}
+.bar .seg button:hover:not(:disabled){background:var(--hover)}
+.bar .seg button:active:not(:disabled){transform:scale(.9)}
+.bar .seg button[aria-pressed="true"]{background:color-mix(in srgb, var(--accent) 86%, transparent); color:var(--accent-ink);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 6px 16px -6px color-mix(in srgb, var(--accent) 80%, transparent)}
+.bar .seg button:disabled{opacity:.35}
+
+/* --- iOS switch with a liquid knob --- */
+.switch{border-radius:99px; padding:6px 14px 6px 7px; gap:9px; font-weight:600; transition:transform .4s var(--spring)}
+.switch .track{width:44px; height:26px; background:var(--track); box-shadow:inset 0 1px 2px rgba(0,0,0,.12); transition:background-color .35s var(--ease)}
+.switch .knob{top:2px; left:2px; width:22px; height:22px; border-radius:99px; background:#fff;
+  box-shadow:0 3px 8px rgba(0,0,0,.18), 0 0 0 .5px rgba(0,0,0,.05); transition:transform .5s var(--spring), width .3s var(--spring-soft), background-color .2s}
+.switch input:checked + .track{background:var(--accent)}
+.switch input:checked + .track .knob{transform:translateX(18px)}
+.switch:active .knob{width:30px; background:rgba(255,255,255,.82); box-shadow:0 3px 10px rgba(0,0,0,.22), inset 0 0 6px rgba(255,255,255,.9)}
+.switch:active input:checked + .track .knob{transform:translateX(10px)}
+
+/* --- tool sheet --- */
+#panel{border-radius:26px; animation:panelIn .9s var(--spring-soft) .12s backwards}
+@keyframes panelIn{from{opacity:0; transform:translateX(-24px) scale(.96)}}
+.tabs{border:0; margin:10px 10px 4px; padding:3px; border-radius:99px; background:var(--inset); box-shadow:inset 0 1px 2px var(--inset-line); gap:0; scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{border:0; border-radius:99px; font-family:var(--f-body); font-size:13px; font-weight:550; letter-spacing:0; padding:7px 9px; color:var(--muted); transition:color .25s, transform .4s var(--spring)}
+.tabs button:active{transform:scale(.92)}
+.tabs button[aria-selected="true"]{color:var(--ink); border-bottom-color:transparent; font-weight:650}
+.tabbody{padding:10px 16px 18px}
+.tabbody:not([hidden]){animation:tabIn .4s var(--ease)}
+@keyframes tabIn{from{opacity:0; transform:translateY(6px)}}
+.tabbody h3{font-family:var(--f-body); font-weight:650; font-size:11px; letter-spacing:.07em; color:var(--muted)}
+.tabbody p{color:var(--muted)}
+.note{border-left:0; padding:8px 10px; background:var(--inset); border-radius:12px; color:var(--muted)}
+
+/* liquid selection indicator shared by tabs, season, quality and plant categories */
+.liq{position:relative}
+.liq > button{position:relative; z-index:1; background:transparent !important; box-shadow:none !important}
+.liq > button[aria-pressed="true"],.liq > button[aria-selected="true"]{color:var(--ink) !important; font-weight:650}
+.liquid-ind{position:absolute; left:0; top:0; border-radius:99px; background:var(--ind); pointer-events:none; z-index:0; opacity:0;
+  box-shadow:var(--ind-shadow), inset 0 1px 0 rgba(255,255,255,.7), inset 0 -1px 0 rgba(0,0,0,.03);
+  transition:transform .55s var(--spring), width .45s var(--spring), height .3s var(--ease), opacity .25s; will-change:transform,width}
+.liquid-ind.moving{animation:squish .55s var(--spring)}
+@keyframes squish{0%{scale:1 1} 30%{scale:1.1 .84} 62%{scale:.96 1.05} 100%{scale:1 1}}
+.tabbody .seg,.chips{background:var(--inset); border:0; border-radius:99px; padding:3px; box-shadow:inset 0 1px 2px var(--inset-line); gap:2px; backdrop-filter:none}
+.chips{border-radius:18px; padding:4px}
+.tabbody .seg button{border:0 !important; border-radius:99px; padding:6px 11px; color:var(--muted); font-weight:550; transition:color .25s, transform .4s var(--spring)}
+.tabbody .seg button:active,.chips button:active{transform:scale(.9)}
+.chips button{border:0; border-radius:99px; padding:5px 11px; color:var(--muted); font-weight:550; transition:color .25s, transform .4s var(--spring)}
+
+/* tiles, buttons, fields */
+.lib{gap:8px}
+.lib button{border:0; border-radius:16px; background:var(--inset); padding:9px 10px; color:var(--ink);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.45), 0 1px 2px var(--inset-line);
+  transition:transform .45s var(--spring), background-color .25s, box-shadow .3s}
+.lib button:hover{background-color:var(--inset-hover); transform:translateY(-2px);
+  background-image:radial-gradient(140px circle at var(--mx,50%) var(--my,50%), var(--glass-sheen), transparent 70%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.6), 0 8px 18px -10px rgba(14,34,24,.45)}
+.lib button:active{transform:scale(.95)}
+.lib button small{font-family:var(--f-mono); color:var(--muted)}
+.lib button.target{outline:2px solid var(--proposed); outline-offset:-2px}
+.btn{border:0; border-radius:99px; background:var(--inset); padding:7px 15px; font-weight:600; color:var(--ink);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.45), 0 1px 2px var(--inset-line); transition:transform .45s var(--spring), background-color .25s, box-shadow .3s}
+.btn:hover{background-color:var(--inset-hover); background-image:radial-gradient(90px circle at var(--mx,50%) var(--my,50%), var(--glass-sheen), transparent 70%)}
+.btn:active{transform:scale(.93)}
+.btn.primary{background:color-mix(in srgb, var(--accent) 88%, transparent); color:var(--accent-ink);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 8px 18px -8px color-mix(in srgb, var(--accent) 80%, transparent)}
+.btn.primary:hover{background-color:var(--accent)}
+.btn.danger{color:var(--warn)}
+#walkpad .btn,#photobar .btn{padding:9px 18px}
+#photobar .btn.primary{background:color-mix(in srgb, var(--accent) 88%, transparent)}
+input[type=text],input[type=number],input[type=search],.tabbody select,#props select,textarea{
+  background-color:var(--inset); border:0; border-radius:11px; padding:7px 10px; color:var(--ink);
+  box-shadow:inset 0 1px 2px var(--inset-line), inset 0 0 0 1px var(--line); transition:box-shadow .25s var(--ease), background-color .2s}
+input[type=text]:focus,input[type=number]:focus,input[type=search]:focus,.tabbody select:focus,#props select:focus,textarea:focus{
+  outline:none; box-shadow:inset 0 1px 2px var(--inset-line), 0 0 0 3px color-mix(in srgb, var(--accent) 38%, transparent)}
+.tabbody select,#props select{-webkit-appearance:none; appearance:none; padding-right:28px; cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237a8a82' stroke-width='1.6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 10px center}
+/* sliders */
+input[type=range]{-webkit-appearance:none; appearance:none; background:transparent; height:24px; --fill:50%; cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:6px; border-radius:99px; background:linear-gradient(to right, var(--accent) 0 var(--fill), var(--track) var(--fill) 100%); box-shadow:inset 0 1px 1px rgba(0,0,0,.08)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:24px; height:24px; margin-top:-9px; border-radius:99px; background:#fff;
+  box-shadow:0 3px 8px rgba(0,0,0,.22), 0 0 0 .5px rgba(0,0,0,.06); transition:transform .4s var(--spring), width .3s var(--spring-soft)}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15); width:32px; background:rgba(255,255,255,.85)}
+input[type=range]::-moz-range-track{height:6px; border-radius:99px; background:var(--track)}
+input[type=range]::-moz-range-progress{height:6px; border-radius:99px; background:var(--accent)}
+input[type=range]::-moz-range-thumb{width:24px; height:24px; border:0; border-radius:99px; background:#fff; box-shadow:0 3px 8px rgba(0,0,0,.22); transition:transform .4s var(--spring)}
+input[type=range]:active::-moz-range-thumb{transform:scale(1.15)}
+/* checkboxes */
+input[type=checkbox]{-webkit-appearance:none; appearance:none; width:20px; height:20px; margin:0; border-radius:7px; flex:none; cursor:pointer;
+  background:var(--inset); box-shadow:inset 0 0 0 1.5px var(--line), inset 0 1px 2px var(--inset-line);
+  display:inline-grid; place-content:center; transition:background-color .25s var(--ease), box-shadow .25s, transform .4s var(--spring)}
+input[type=checkbox]::after{content:""; width:10px; height:5px; margin-top:-2px; border-left:2px solid #fff; border-bottom:2px solid #fff; transform:rotate(-45deg) scale(0); transition:transform .4s var(--spring)}
+input[type=checkbox]:checked{background:var(--accent); box-shadow:0 4px 10px -4px color-mix(in srgb, var(--accent) 80%, transparent)}
+input[type=checkbox]:checked::after{transform:rotate(-45deg) scale(1)}
+input[type=checkbox]:active{transform:scale(.85)}
+.check{gap:10px; padding:5px 0}
+input[type=color]{border-radius:8px !important; overflow:hidden}
+
+/* inset cards inside the sheets */
+.clear,.design,.brushbar,#pl-form,.swatch{background:var(--inset); border:0; border-radius:14px; box-shadow:inset 0 1px 0 rgba(255,255,255,.35), 0 1px 2px var(--inset-line)}
+.brushbar.on{box-shadow:inset 0 0 0 1.5px var(--proposed)}
+.swatch{transition:transform .4s var(--spring), background-color .2s} .swatch:hover{background-color:var(--inset-hover)} .swatch:active{transform:scale(.95)}
+table.facts td{border-bottom:1px solid var(--line)}
+.pill{border-radius:99px; padding:3px 9px; font-weight:650; letter-spacing:.05em; border:0}
+.pill.proposed{background:color-mix(in srgb, var(--proposed) 18%, transparent); color:var(--proposed)}
+.pill.existing{background:color-mix(in srgb, var(--accent) 18%, transparent); color:var(--accent)}
+
+/* properties sheet: springs in from the side, out with a quick fade */
+#props{border-radius:26px; padding:0; overflow:hidden; display:flex; flex-direction:column}
+#props .pscroll{overflow-y:auto; padding:14px 16px 16px; min-height:0; flex:1 1 auto; scrollbar-width:thin}
+#props:not([hidden]){animation:sheetIn .55s var(--spring-soft)}
+#props.out{animation:sheetOut .22s var(--ease) forwards}
+@keyframes sheetIn{from{opacity:0; transform:translateX(22px) scale(.95)}}
+@keyframes sheetOut{to{opacity:0; transform:translateX(16px) scale(.97)}}
+#props header input{font-family:var(--f-display); font-weight:700; letter-spacing:-.02em; background:transparent; box-shadow:none; border-bottom:0; padding:2px 0; font-size:19px}
+#props header input:focus{box-shadow:0 2px 0 var(--accent)}
+#props .x{width:28px; height:28px; border-radius:99px; background:var(--inset); display:grid; place-items:center; transition:transform .4s var(--spring), background-color .2s}
+#props .x:hover{background:var(--inset-hover)} #props .x:active{transform:scale(.85)}
+
+/* floating pills */
+#status{border-radius:99px; padding:7px 16px; font-size:12.5px; color:var(--ink); font-weight:500}
+#status.flash{animation:statusIn .5s var(--spring)}
+@keyframes statusIn{from{opacity:.2; transform:translateX(-50%) translateY(6px) scale(.96)} to{transform:translateX(-50%)}}
+#roomcard{border-radius:20px; padding:9px 15px}
+#roomcard:not([hidden]){animation:dropIn .55s var(--spring)}
+@keyframes dropIn{from{opacity:0; transform:translateX(-50%) translateY(-12px) scale(.94)} to{transform:translateX(-50%)}}
+#savetoast{border-radius:99px; padding:8px 15px; font-weight:550}
+#savetoast:not([hidden]){animation:popIn .5s var(--spring)}
+#savetoast.out{animation:popOut .25s var(--ease) forwards}
+@keyframes popIn{from{opacity:0; transform:translateY(10px) scale(.9)}}
+@keyframes popOut{to{opacity:0; transform:translateY(6px) scale(.94)}}
+#savetoast.ok{color:var(--accent)} #savetoast.err{color:var(--warn)}
+#compass{border-radius:50%; background:var(--glass); -webkit-backdrop-filter:var(--glass-filter); backdrop-filter:var(--glass-filter);
+  box-shadow:var(--glass-shadow), inset 0 1px 0 var(--glass-edge), inset 0 0 0 1px rgba(255,255,255,.12)}
+#compass circle{fill:transparent; stroke:transparent}
+
+/* scene labels: small frosted chips */
+.lab{background:rgba(255,255,255,.62); -webkit-backdrop-filter:blur(8px) saturate(170%); backdrop-filter:blur(8px) saturate(170%); border-radius:99px; padding:2px 8px;
+  box-shadow:0 2px 8px -2px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.7); color:#10201a; font-family:var(--f-mono)}
+.lab b{font-family:var(--f-body)}
+.lab.dim{background:rgba(20,26,24,.55); color:#fff; box-shadow:0 2px 8px -2px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.18)}
+.lab.meas{background:color-mix(in srgb, var(--proposed) 80%, transparent); color:#fff}
+.lab.obj{background:color-mix(in srgb, var(--proposed) 78%, transparent); color:#fff; font-weight:600}
+
+#panel{width:318px}
+.tabs button{padding:7px 8px; font-size:12.5px}
+#props{width:300px}
+#props .prow{grid-template-columns:minmax(0,1fr) auto; gap:6px}
+#props .prow input[type=range]{width:88px}
+#props input[type=number]{width:62px; padding:6px 8px}
+#props #p-x,#props #p-y{width:70px}
+#props header{gap:6px}
+#props header input{font-size:17px; min-width:0}
+@media (max-width: 760px){
+  #panel{width:auto}
+  #props{width:auto}
+  .bar{gap:7px}
+  .brand{border-radius:16px; padding:6px 12px}
+  .bar .seg button{padding:6px 10px; font-size:12px}
+  .switch{padding:4px 11px 4px 5px} .switch .track{width:40px; height:24px} .switch .knob{width:20px; height:20px} .switch input:checked + .track .knob{transform:translateX(16px)}
+  #panel{display:flex; border-radius:26px 26px 0 0; animation:none; transition:transform .55s var(--spring-soft), opacity .3s var(--ease)}
+  #panel.collapsed{display:flex; transform:translateY(calc(100% + 30px)); opacity:0; pointer-events:none}
+  #props{border-radius:24px}
+  #props:not([hidden]){animation-name:sheetUp}
+  @keyframes sheetUp{from{opacity:0; transform:translateY(30px) scale(.97)}}
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none !important; transition:none !important}
+}
 </style>
 
 <div id="app">
@@ -1751,7 +1993,8 @@ function setMode(m){
 document.getElementById('editToggle').onchange = e=>{ setMode(e.target.checked ? 'edit' : 'view'); e.target.blur(); };
 function renderProps(){
   const o = getObj(ui.selected);
-  if (!o || !ui.propsOpen){ propsEl.hidden = true; propsEl.innerHTML=''; return; }
+  if (!o || !ui.propsOpen){ hideAnimated(propsEl, ()=>{ propsEl.innerHTML=''; }); return; }
+  clearTimeout(propsEl._hideT); propsEl.classList.remove('out');
   propsEl.hidden = false;
   const T = TYPES[o.type];
   const num = (key,label,min,max,step,val)=>`<div class="prow"><label for="p-${key}">${label}</label><span class="ctl"><input type="range" id="p-${key}" data-k="${key}" min="${min}" max="${max}" step="${step}" value="${val}"><input type="number" id="p-${key}-n" data-k="${key}" min="${min}" max="${max}" step="${step}" value="${val}"></span></div>`;
@@ -1773,7 +2016,7 @@ function renderProps(){
   }
   if (o.note) h += `<p class="note">${escapeHtml(o.note)}</p>`;
   h += `<div class="btns"><button class="btn" id="p-dup">Duplicate</button><button class="btn danger" id="p-del">Delete</button><button class="btn" id="p-close">Done</button></div>`;
-  propsEl.innerHTML = h;
+  propsEl.innerHTML = '<div class="pscroll">' + h + '</div>';
   const commit = ()=>{ placeOrRebuild(o); pushHistory(); };
   propsEl.querySelectorAll('[data-part]').forEach(inp=>{
     inp.addEventListener('input', ()=>{ o.colors = {...(o.colors||{}), [inp.dataset.part]: inp.value}; const g = meshById.get(o.id); if (g) applyColors(g, o); });
@@ -2180,7 +2423,8 @@ let playing=false; document.getElementById('s-play').onclick=(e)=>{ playing=!pla
 document.querySelectorAll('[role=tab]').forEach(t=>t.onclick=()=>{ document.querySelectorAll('[role=tab]').forEach(x=>{ x.setAttribute('aria-selected', x===t); document.getElementById('tab-'+x.dataset.tab).hidden = x!==t; }); });
 document.getElementById('toggleTools').onclick=()=>document.getElementById('panel').classList.toggle('collapsed');
 if (innerWidth<=760) document.getElementById('panel').classList.add('collapsed');
-function setStatus(t){ document.getElementById('status').textContent = t || (ui.edit ? 'Edit mode · click to select, drag to move · right-click for properties · Q / E rotate · Delete removes' : 'View mode · drag to orbit · click the lawn to throw a ball for the dog · click anything for details'); }
+function setStatus(t){ const st = document.getElementById('status'), before = st.textContent; setStatusText(st, t); if (st.textContent !== before){ st.classList.remove('flash'); void st.offsetWidth; st.classList.add('flash'); } }
+function setStatusText(st, t){ st.textContent = t || (ui.edit ? 'Edit mode · click to select, drag to move · right-click for properties · Q / E rotate · Delete removes' : 'View mode · drag to orbit · click the lawn to throw a ball for the dog · click anything for details'); }
 
 /* ---------- data tab ---------- */
 document.getElementById('tab-about').innerHTML = `
@@ -2296,7 +2540,7 @@ try { autoEl.checked = localStorage.getItem(STORE_KEY+'-autosave') !== 'off'; } 
 autoEl.onchange = ()=>{ try{ localStorage.setItem(STORE_KEY+'-autosave', autoEl.checked ? 'on' : 'off'); }catch(e){}
   showToast(autoEl.checked ? 'Autosave on' : 'Autosave off', autoEl.checked ? 'ok' : '', 1800); if (autoEl.checked) scheduleAutosave(); };
 let autoT = null, autoBusy = false, autoPending = false, autoArmed = false, toastT = null;
-function showToast(html, kind, ms){ toastEl.innerHTML = html; toastEl.className = kind||''; toastEl.hidden = false; clearTimeout(toastT); if (ms) toastT = setTimeout(()=>toastEl.hidden = true, ms); }
+function showToast(html, kind, ms){ toastEl.innerHTML = html; toastEl.className = kind||''; toastEl.hidden = false; clearTimeout(toastT); if (ms) toastT = setTimeout(()=>hideAnimated(toastEl), ms); }
 const designData = (garden, objects)=>JSON.stringify({garden, objects});
 function scheduleAutosave(){ if (!autoArmed || !autoEl.checked || !lastDesign) return; clearTimeout(autoT); autoT = setTimeout(autosave, 1800); }
 async function autosave(){
@@ -2330,6 +2574,49 @@ document.getElementById('d-shot').onclick = async ()=>{
 document.getElementById('d-reset').onclick = ()=>{ document.getElementById('d-reset-confirm').hidden=false; };
 document.getElementById('d-reset-no').onclick = ()=>{ document.getElementById('d-reset-confirm').hidden=true; };
 document.getElementById('d-reset-yes').onclick = ()=>{ pauseAutosave('Garden reset.'); state = DEFAULT_STATE(); rebuildAll(); syncGardenUI(); select(null); pushHistory(); document.getElementById('d-reset-confirm').hidden=true; dStatus.textContent='Starting garden restored.'; };
+
+/* ---------- liquid glass interactions ---------- */
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+function hideAnimated(el, after){ // play the element's .out animation, then hide it
+  if (el.hidden){ after && after(); return; }
+  if (reduceMotion.matches){ el.hidden = true; after && after(); return; }
+  el.classList.add('out'); clearTimeout(el._hideT);
+  el._hideT = setTimeout(()=>{ el.hidden = true; el.classList.remove('out'); after && after(); }, 230);
+}
+// the sheen follows the pointer across any glass surface, tile or button
+const SHEEN_SEL = '.brand,.selbox,.switch,.bar .seg,#panel,#props,#status,.lib button,.btn';
+document.addEventListener('pointermove', e=>{
+  const el = e.target.closest && e.target.closest(SHEEN_SEL); if (!el) return;
+  const r = el.getBoundingClientRect(); el.style.setProperty('--mx', (e.clientX-r.left)+'px'); el.style.setProperty('--my', (e.clientY-r.top)+'px');
+}, {passive:true});
+// a glass pill slides between the options of single-choice groups and squishes as it lands
+const LIQUID_GROUPS = [['.tabs','aria-selected'],['#season','aria-pressed'],['#quality','aria-pressed'],['.chips','aria-pressed']];
+function ensureLiquid(){
+  for (const [sel, attr] of LIQUID_GROUPS) document.querySelectorAll(sel).forEach(c=>{
+    if (c._liq) return; c._liq = true; c.classList.add('liq');
+    const ind = document.createElement('span'); ind.className = 'liquid-ind'; ind.setAttribute('aria-hidden','true'); c.prepend(ind);
+    let last = null;
+    const upd = ()=>{
+      const act = [...c.children].find(b=>b.getAttribute(attr)==='true' && !b.hidden);
+      if (!act || !c.offsetWidth){ ind.style.opacity = 0; last = null; return; }
+      const first = !last;
+      if (!first && last!==act){ ind.classList.remove('moving'); void ind.offsetWidth; ind.classList.add('moving'); }
+      if (first) ind.style.transition = 'none';
+      ind.style.width = act.offsetWidth+'px'; ind.style.height = act.offsetHeight+'px'; ind.style.transform = `translate(${act.offsetLeft}px, ${act.offsetTop}px)`; ind.style.opacity = 1;
+      if (first){ void ind.offsetWidth; ind.style.transition = ''; }
+      last = act;
+    };
+    new MutationObserver(upd).observe(c, {attributes:true, subtree:true, attributeFilter:[attr,'hidden']});
+    new ResizeObserver(upd).observe(c); upd();
+  });
+}
+let liqQueued = false;
+new MutationObserver(()=>{ if (liqQueued) return; liqQueued = true; requestAnimationFrame(()=>{ liqQueued = false; ensureLiquid(); }); }).observe(document.getElementById('panel'), {childList:true, subtree:true});
+ensureLiquid();
+// sliders show their filled part in the accent colour
+function rangeFill(r){ const mn = +r.min || 0, mx = +r.max || 100; r.style.setProperty('--fill', ((+r.value - mn)/(mx - mn)*100).toFixed(1)+'%'); }
+document.addEventListener('input', e=>{ if (e.target.type==='range') rangeFill(e.target); });
+setInterval(()=>document.querySelectorAll('#panel input[type=range], #props input[type=range]').forEach(rangeFill), 400);
 
 /* keep panels below the toolbar however many rows it wraps to */
 const barEl = document.querySelector('.bar');

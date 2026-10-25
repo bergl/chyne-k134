@@ -1860,7 +1860,7 @@ canvas.addEventListener('pointerup', e=>{
   setNDC(e);
   if (ui.measuring){ measureClick(); return; }
   const hit = pickObject();
-  if (!ui.edit){ if (dogClick()) return; if (pileClick(hit)) return; if (hit){ showObjectInfo(getObj(hit.id)); return; } if (!showRoomInfo() ) throwBall(); return; }
+  if (!ui.edit){ if (catClick()) return; if (dogClick()) return; if (pileClick(hit)) return; if (hit){ showObjectInfo(getObj(hit.id)); return; } if (!showRoomInfo() ) throwBall(); return; }
   if (!hit){ select(null); showRoomInfo(); }
 });
 addEventListener('keydown', e=>{
@@ -1958,7 +1958,7 @@ const LAYERS = [
   ['proposed','Proposed projects',true],['existing','Existing garden elements',true],['trees','Trees & plants',true],
   ['roof','Roof',true],['furniture','Furniture (illustrative)',true],['rooms','Room labels',true],
   ['dims','Plot & house dimensions',false],['fence','Boundary fence (assumed)',true],['plot','Plot boundary line',true],
-  ['sky','Sky & clouds',true],['grass','Grass blades',true],['dog','Dog',true],['swimmer','Swimmer in the pool',true],['pv','PV array (placeholder layout)',false],['snap','Snap moves to 10 cm',true]
+  ['sky','Sky & clouds',true],['grass','Grass blades',true],['dog','Dog',true],['cat','Cat',true],['swimmer','Swimmer in the pool',true],['pv','PV array (placeholder layout)',false],['snap','Snap moves to 10 cm',true]
 ];
 function renderLayers(){
   const el = document.getElementById('tab-layers');
@@ -1992,6 +1992,7 @@ function updateLabels(){
   }
   if (ui.layers.dims) items.push(...dimsLabels());
   for (const m of measureLabels) items.push({...m, cls:'meas'});
+  if (cat.bubble && performance.now() < cat.bubbleUntil && catGroup.visible) items.push({pos:catGroup.position.clone().add(V(0,.6,0)), text:cat.bubble, cls:'obj'});
   if (dog.bubble && performance.now() < dog.bubbleUntil && dogGroup.visible) items.push({pos:dogGroup.position.clone().add(V(0,1.15,0)), text:dog.bubble, cls:'obj'});
   const sel = getObj(ui.selected);
   if (drag && sel){ items.push({pos:V(sel.x, levelAt(sel.x,sel.y)+2.2, sel.y), text:`x ${sel.x.toFixed(1)}  y ${sel.y.toFixed(1)}`, cls:'obj'}); }
@@ -2608,7 +2609,7 @@ furBump.repeat.set(3,3); fur.bumpMap = furBump; fur.bumpScale = 1.2; furDark.bum
 })();
 const ball = new THREE.Mesh(new THREE.SphereGeometry(.034,16,12), new THREE.MeshStandardMaterial({color:0xd4e34a, roughness:.7}));
 ball.castShadow = true; ball.visible = false; scene.add(ball);
-const dog = {extraY:0, crouch:0, lastPile:0, pile:{}, x:-6.5, y:3.2, yaw:Math.PI, h:0, speed:0, phase:0, state:'wander', target:null, timer:2, wag:.3, look:null, sit:0, sniff:0, hop:0, bubble:'', bubbleUntil:0, carrying:false};
+const dog = {chase:{}, lastChase:0, extraY:0, crouch:0, lastPile:0, pile:{}, x:-6.5, y:3.2, yaw:Math.PI, h:0, speed:0, phase:0, state:'wander', target:null, timer:2, wag:.3, look:null, sit:0, sniff:0, hop:0, bubble:'', bubbleUntil:0, carrying:false};
 const pointer = {x:0, y:0, t:-1e9, vx:0, vy:0};
 const ballSt = {flying:false, t:0, dur:1, a:null, b:null, onGround:false};
 const DOG_BLOCK = new Set(['snowman','standing','stonegroup','sauna_cube','sofa','grill','boulder','pool','pond','pool_round','hottub','sauna_barrel','sauna_cabin','shed','wall','bed','steps','pillar','carport']);
@@ -2663,7 +2664,22 @@ function updateDog(dt, now){
     if (t>=1){ ballSt.flying=false; ballSt.onGround=true; } }
   const pointerFresh = now-pointer.t < 2500, pd = Math.hypot(pointer.x-dog.x, pointer.y-dog.y);
   let goal=null, speedT=0, scripted=false;
-  if (dog.state==='pile'){
+  if (dog.state==='chase'){
+    const C = dog.chase, inTree = cat.state==='climb' || cat.state==='intree';
+    C.t += dt; dog.wag = 1;
+    if (!catGroup.visible){ dog.state='wander'; dog.target=null; dog.timer=1; }
+    else if (inTree || C.stage==='tree'){
+      if (C.stage!=='tree'){ C.stage='tree'; C.t=0; C.nextBark=.3; }
+      const tr = cat.tree || {x:cat.x, y:cat.y}, dx = dog.x-tr.x, dy = dog.y-tr.y, d = Math.hypot(dx,dy) || 1, bx = tr.x + dx/d*.95, by = tr.y + dy/d*.95;
+      if (Math.hypot(bx-dog.x, by-dog.y) > .35){ goal=[bx,by]; speedT=3.6; } else dog.look=[tr.x, tr.y];
+      if (C.t > C.nextBark && Math.hypot(bx-dog.x, by-dog.y) < .9){ bark(); C.nextBark = C.t + .8 + Math.random()*.9; if (dog.hop<=0) dog.hop = 1; }
+      if (C.t > 7 || !inTree){ dog.state='wander'; dog.target=randomSpot(); dog.timer=0; dog.look=null; dog.lastChase=now; }
+    } else {
+      goal=[cat.x, cat.y]; speedT=5.0;
+      if (C.t > .6 && Math.hypot(cat.x-dog.x, cat.y-dog.y) < .5) catDodge();
+      if (C.t > 10){ dog.state='wander'; dog.target=randomSpot(); dog.timer=0; dog.lastChase=now; }
+    }
+  } else if (dog.state==='pile'){
     const P = dog.pile, pl = pileById(P.id);
     if (!pl){ dog.state='wander'; dog.target=null; dog.timer=.5; }
     else if (P.stage==='approach'){ goal=[P.rx, P.ry]; speedT=2.4; dog.wag=Math.min(1,dog.wag+dt);
@@ -2730,7 +2746,7 @@ function updateDog(dt, now){
   const leapPitch = dog.state==='pile' && dog.pile.stage==='leap' ? (.5 - dog.pile.t)*.9 : 0;
   DP.root.position.y = bob + hopY - dog.sit*.13 - dog.crouch*.09;
   DP.root.rotation.z = (run ? Math.sin(dog.phase)*.06 : 0) + dog.sit*.42 - dog.sniff*.05 - dog.crouch*.14 + leapPitch;
-  DP.neck.rotation.z = -dog.sniff*.85 + dog.sit*.15 + (run? -.15:0);
+  DP.neck.rotation.z = -dog.sniff*.85 + dog.sit*.15 + (run? -.15:0) + (dog.state==='chase' && dog.chase.stage==='tree' ? .6 : 0);   // looks up at the cat in the tree
   DP.head.rotation.z = -dog.sniff*.3 + Math.sin(now/700)*.04;
   // look at cursor: yaw of the head relative to the body
   if (dog.look){ let d=Math.atan2(-(dog.look[1]-dog.y), dog.look[0]-dog.x)-dog.yaw; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; DP.neck.rotation.y += (THREE.MathUtils.clamp(d,-.9,.9)-DP.neck.rotation.y)*Math.min(1,dt*6); }
@@ -2741,6 +2757,150 @@ function updateDog(dt, now){
   for (const [i,e] of DP.ears.entries()) e.rotation.z = Math.sin(dog.phase*2+i)*.12*amp + (run?.35:0);
   dogGroup.position.set(dog.x, dog.h + dog.extraY, dog.y); dogGroup.rotation.y = dog.yaw;
   if (dog.carrying){ DP.mouth.updateWorldMatrix(true,false); ball.position.setFromMatrixPosition(DP.mouth.matrixWorld); ball.visible=true; }
+}
+
+/* ================= CAT: a black cat that strolls about, meows when clicked and escapes up a tree ================= */
+const catGroup = new THREE.Group(); scene.add(catGroup);
+const CP = {};
+const catFur = new THREE.MeshPhysicalMaterial({color:0x161518, roughness:.6, sheen:1, sheenRoughness:.45, sheenColor:new THREE.Color(0x4d4956)}); catFur.bumpMap = furBump; catFur.bumpScale = .8; catFur.userData.part = 'Fur';
+(function buildCat(){
+  const caps=(r,l,m)=>new THREE.Mesh(new THREE.CapsuleGeometry(r,l,6,12), m), sph=(r,m)=>new THREE.Mesh(new THREE.SphereGeometry(r,18,12), m);
+  const eyeMat = new THREE.MeshStandardMaterial({color:0xc9d43a, emissive:0x6f7d12, emissiveIntensity:.7, roughness:.15});
+  const dark = new THREE.MeshStandardMaterial({color:0x050505, roughness:.3}), noseMat = new THREE.MeshStandardMaterial({color:0x3a2a2e, roughness:.5}), earIn = new THREE.MeshStandardMaterial({color:0x3b2c31, roughness:.8, side:THREE.DoubleSide});
+  const root = new THREE.Group(); catGroup.add(root); CP.root = root;               // forward is +x
+  const body = caps(.072,.24,catFur); body.rotation.z = Math.PI/2; body.position.set(0,.205,0); body.scale.set(1,1,.9); root.add(body);
+  const chest = sph(.078,catFur); chest.position.set(.12,.2,0); chest.scale.set(1,1.05,.88); root.add(chest);
+  const hips = sph(.08,catFur); hips.position.set(-.12,.215,0); hips.scale.set(1,.95,.92); root.add(hips);
+  const neck = new THREE.Group(); neck.position.set(.17,.235,0); root.add(neck); CP.neck = neck;
+  const nk = caps(.04,.05,catFur); nk.rotation.z = -.7; nk.position.set(.025,.03,0); neck.add(nk);
+  const head = new THREE.Group(); head.position.set(.075,.065,0); neck.add(head); CP.head = head;
+  const skull = sph(.062,catFur); skull.scale.set(1,.9,1.08); head.add(skull);
+  const muzzle = sph(.03,catFur); muzzle.scale.set(1,.78,1.25); muzzle.position.set(.052,-.022,0); head.add(muzzle);
+  const nose = sph(.009,noseMat); nose.position.set(.08,-.008,0); head.add(nose);
+  for (const z of [-1,1]){
+    const eye = sph(.0125,eyeMat); eye.position.set(.047,.014,z*.029); eye.scale.set(.6,1,1); head.add(eye);
+    const pupil = box(.002,.016,.004,dark,.054,.014,z*.0295); head.add(pupil);
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(.024,.055,4), catFur); ear.position.set(-.008,.062,z*.034); ear.rotation.set(z*.28,0,-.12); ear.scale.z = .55; head.add(ear);
+    const inner = new THREE.Mesh(new THREE.ConeGeometry(.016,.04,3), earIn); inner.position.set(-.002,.058,z*.034); inner.rotation.set(z*.28,0,-.12); inner.scale.z = .3; head.add(inner);
+    for (const a of [-.12,0,.12]){ const w = new THREE.Mesh(new THREE.CylinderGeometry(.0007,.0007,.09,3), new THREE.MeshBasicMaterial({color:0xd8d8d8})); w.rotation.set(Math.PI/2 + z*.15, 0, a); w.position.set(.06,-.02+a*.05,z*.055); head.add(w); }
+  }
+  CP.legs = [];
+  for (const [x,z,front] of [[.12,.042,1],[.12,-.042,1],[-.13,.046,0],[-.13,-.046,0]]){
+    const hip = new THREE.Group(); hip.position.set(x,.175,z); root.add(hip);
+    const up = front ? caps(.021,.07,catFur) : sph(.042,catFur); if (front) up.position.y = -.05; else { up.scale.set(1.1,1.5,.8); up.position.y = -.03; } hip.add(up);
+    const knee = new THREE.Group(); knee.position.y = -.1; hip.add(knee);
+    const low = caps(.017,.065,catFur); low.position.y = -.04; knee.add(low);
+    const paw = sph(.021,catFur); paw.scale.set(1.3,.6,1); paw.position.set(.008,-.08,0); knee.add(paw);
+    CP.legs.push({hip, knee, front, z});
+  }
+  const tail = new THREE.Group(); tail.position.set(-.19,.23,0); root.add(tail); CP.tail = tail;
+  let parent = tail; CP.tailSegs = [];
+  for (let i=0;i<9;i++){ const seg = new THREE.Group(); seg.position.x = i===0 ? 0 : -.042; parent.add(seg);
+    const m = caps(.0145-.0006*i,.03,catFur); m.rotation.z = Math.PI/2; m.position.x = -.021; seg.add(m); CP.tailSegs.push(seg); parent = seg; }
+  // generous invisible target so the cat is easy to click
+  const hit = new THREE.Mesh(new THREE.SphereGeometry(.32,8,6), new THREE.MeshBasicMaterial({visible:false})); hit.position.y = .2; catGroup.add(hit);
+  catGroup.traverse(m=>{ if (m.isMesh && m!==hit && m.material.visible!==false){ m.castShadow = true; m.receiveShadow = true; } });
+})();
+const cat = {x:-6.2, y:8.4, yaw:.6, h:0, speed:0, phase:0, state:'wander', target:null, timer:3, extraY:0, sit:0, loaf:0, groom:0, hop:0, climb:0, climbH:2, tree:null, side:0, retarget:0, fleeT:0, bubble:'', bubbleUntil:0};
+function meow(){
+  cat.bubble = Math.random() < .5 ? 'Meow!' : 'Mňau!'; cat.bubbleUntil = performance.now() + 1500;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const t0 = audioCtx.currentTime, d = .78, f = audioCtx.createBiquadFilter(), g = audioCtx.createGain();
+    for (const [type,det] of [['sawtooth',0],['triangle',14]]){ const o = audioCtx.createOscillator(); o.type = type; o.detune.value = det;
+      o.frequency.setValueAtTime(540,t0); o.frequency.linearRampToValueAtTime(860,t0+.22); o.frequency.linearRampToValueAtTime(780,t0+.45); o.frequency.exponentialRampToValueAtTime(420,t0+d);
+      o.connect(f); o.start(t0); o.stop(t0+d+.05); }
+    f.type = 'bandpass'; f.Q.value = 3.2; f.frequency.setValueAtTime(900,t0); f.frequency.linearRampToValueAtTime(1900,t0+.25); f.frequency.linearRampToValueAtTime(1150,t0+.5); f.frequency.linearRampToValueAtTime(650,t0+d);
+    g.gain.setValueAtTime(.0001,t0); g.gain.exponentialRampToValueAtTime(.5,t0+.06); g.gain.setValueAtTime(.42,t0+.5); g.gain.exponentialRampToValueAtTime(.0001,t0+d);
+    f.connect(g); g.connect(audioCtx.destination);
+  } catch(e){}
+}
+function climbableTrees(){ return state.objects.filter(o=>{ if (o.type!=='tree' || !visibleObj(o) || o.p.h < 2.6) return false; const k = o.p.kind;
+  if (typeof k==='string' && k.startsWith('sp:')){ const sp = getSpecies(k.slice(3)); return !!sp && ['tree','small','multistem','columnar','spreading','conifer'].includes(sp.form); }
+  return !['grass','lavender','aster','shrub','burningbush'].includes(k); }); }
+function chooseTree(){ // the tree the cat reaches well before the dog
+  let best = null, bestScore = -.5;
+  for (const t of climbableTrees()){ const dc = Math.hypot(t.x-cat.x, t.y-cat.y), dd = Math.hypot(t.x-dog.x, t.y-dog.y); if (dc > 15) continue; const sc = dd - dc*1.1; if (sc > bestScore){ bestScore = sc; best = t; } }
+  if (best) cat.side = Math.atan2(cat.y-best.y, cat.x-best.x);
+  return best;
+}
+function fleeSpot(){
+  const a0 = Math.atan2(cat.y-dog.y, cat.x-dog.x);
+  for (const off of [0,.5,-.5,1,-1,1.6,-1.6,2.3,-2.3]){ const x = cat.x + Math.cos(a0+off)*3.5, y = cat.y + Math.sin(a0+off)*3.5; if (dogFree(x,y) && levelAt(x,y) > -.19) return [x,y]; }
+  return randomSpot();
+}
+function catDodge(){ cat.hop = 1; cat.target = null; cat.retarget = 0; if (!cat.tree) cat.yaw += (Math.random()<.5?-1:1)*1.1; }
+function catClick(){
+  if (!catGroup.visible || !ray.intersectObject(catGroup, true).length) return false;
+  meow();
+  const inTree = cat.state==='climb' || cat.state==='intree';
+  if (!inTree){ cat.state = 'flee'; cat.tree = chooseTree(); cat.target = null; cat.fleeT = 0; cat.hop = 1; }
+  if (dogGroup.visible && dog.state!=='chase'){ dog.state = 'chase'; dog.chase = {stage:'run', t:0}; dog.target = null; dog.sit = 0; dog.look = null; if (dog.carrying){ dog.carrying = false; ballSt.onGround = true; } }
+  setStatus(inTree ? 'Meow! The cat is safe up in the tree.' : 'Meow! … and the dog is after the cat.');
+  return true;
+}
+function updateCat(dt, now){
+  catGroup.visible = ui.layers.cat!==false; if (!catGroup.visible) return;
+  let goal = null, speedT = 0, scripted = false;
+  const dd = Math.hypot(dog.x-cat.x, dog.y-cat.y), chased = dog.state==='chase';
+  if (cat.state==='flee'){
+    cat.fleeT += dt;
+    if (cat.tree){ const ax = cat.tree.x + Math.cos(cat.side)*.32, ay = cat.tree.y + Math.sin(cat.side)*.32; goal = [ax,ay]; speedT = 5.4;
+      if (Math.hypot(ax-cat.x, ay-cat.y) < .3){ cat.state = 'climb'; cat.climb = 0; cat.climbH = THREE.MathUtils.clamp(cat.tree.p.h*.42, 1.3, 2.4); cat.yaw = Math.PI - cat.side; cat.x = cat.tree.x + Math.cos(cat.side)*.16; cat.y = cat.tree.y + Math.sin(cat.side)*.16; } }
+    else { cat.retarget -= dt; if (!cat.target || cat.retarget <= 0){ cat.target = fleeSpot(); cat.retarget = .9; } goal = cat.target; speedT = 5.4;
+      if ((!chased && dd > 4) || cat.fleeT > 12){ cat.state = 'sit'; cat.timer = 3 + Math.random()*3; cat.target = null; } }
+  } else if (cat.state==='climb'){ scripted = true; cat.climb = Math.min(1, cat.climb + dt/1.3); cat.extraY = cat.climb*cat.climbH;
+    if (cat.climb >= 1){ cat.state = 'intree'; cat.timer = 10 + Math.random()*6; cat.yaw = -cat.side; cat.x = cat.tree.x + Math.cos(cat.side)*.3; cat.y = cat.tree.y + Math.sin(cat.side)*.3; } }
+  else if (cat.state==='intree'){ scripted = true; cat.extraY = cat.climbH; cat.timer -= dt; cat.yaw = -cat.side;
+    if (cat.timer <= 0 && !chased){ cat.state = 'descend'; cat.yaw = Math.PI - cat.side; cat.x = cat.tree.x + Math.cos(cat.side)*.16; cat.y = cat.tree.y + Math.sin(cat.side)*.16; } }
+  else if (cat.state==='descend'){ scripted = true; cat.climb = Math.max(0, cat.climb - dt/1.7); cat.extraY = cat.climb*cat.climbH;
+    if (cat.climb <= 0){ cat.state = 'wander'; cat.x = cat.tree.x + Math.cos(cat.side)*.45; cat.y = cat.tree.y + Math.sin(cat.side)*.45; cat.tree = null; cat.target = null; cat.timer = .5; cat.extraY = 0; } }
+  else if (cat.state==='wander'){
+    if (!cat.target){ cat.timer -= dt; if (cat.timer <= 0) cat.target = randomSpot(); }
+    else { goal = cat.target; speedT = .55;
+      if (Math.hypot(goal[0]-cat.x, goal[1]-cat.y) < .25){ cat.target = null; const r = Math.random(); cat.state = r<.35 ? 'sit' : r<.6 ? 'groom' : r<.8 ? 'loaf' : 'wander'; cat.timer = cat.state==='loaf' ? 8+Math.random()*8 : 3+Math.random()*5; } }
+  } else { cat.timer -= dt; if (cat.timer <= 0){ cat.state = 'wander'; cat.timer = 1+Math.random()*2; } }
+  // locomotion
+  if (!scripted){
+    if (goal){ const dx = goal[0]-cat.x, dy = goal[1]-cat.y, dist = Math.hypot(dx,dy);
+      let dyaw = Math.atan2(-dy,dx) - cat.yaw; while (dyaw>Math.PI) dyaw -= 2*Math.PI; while (dyaw<-Math.PI) dyaw += 2*Math.PI;
+      cat.yaw += THREE.MathUtils.clamp(dyaw, -(speedT>3?8:3)*dt, (speedT>3?8:3)*dt);
+      speedT *= THREE.MathUtils.clamp(1.3-Math.abs(dyaw), .2, 1) * THREE.MathUtils.clamp(dist/.4, .25, 1); }
+    cat.speed += (speedT - cat.speed) * Math.min(1, dt*(speedT>3?6:3));
+    const nx = cat.x + Math.cos(cat.yaw)*cat.speed*dt, ny = cat.y - Math.sin(cat.yaw)*cat.speed*dt;
+    if (dogFree(nx,ny)){ cat.x = nx; cat.y = ny; } else { cat.speed *= .3; cat.target = null; cat.retarget = 0; if (cat.state==='wander') cat.yaw += 1.4; }
+    cat.extraY += (0 - cat.extraY) * Math.min(1, dt*6);
+  } else cat.speed = 0;
+  const ground = levelAt(cat.x, cat.y); cat.h += (ground - cat.h) * Math.min(1, dt*8);
+  // animation
+  const run = cat.speed > 2.4, climbing = cat.state==='climb' || cat.state==='descend';
+  cat.phase += dt * (cat.speed*(run?3.4:5.2) + (cat.speed>.05?1:0)) + (climbing ? dt*9 : 0);
+  const amp = climbing ? .7 : THREE.MathUtils.clamp(cat.speed/.6, 0, 1) * (run ? .85 : .42);
+  const sitting = cat.state==='sit' || cat.state==='groom' || cat.state==='intree';
+  cat.sit += ((sitting?1:0) - cat.sit) * Math.min(1, dt*4);
+  cat.loaf += ((cat.state==='loaf'?1:0) - cat.loaf) * Math.min(1, dt*2.5);
+  cat.groom += ((cat.state==='groom'?1:0) - cat.groom) * Math.min(1, dt*3);
+  if (cat.hop > 0) cat.hop = Math.max(0, cat.hop - dt*2.6);
+  const hopY = cat.hop > 0 ? Math.sin((1-cat.hop)*Math.PI)*.28 : 0;
+  for (const L of CP.legs){
+    const ph = run ? cat.phase + (L.front?0:Math.PI*.85) + (L.z>0?.3:0) : cat.phase + ((L.front ^ (L.z>0)) ? 0 : Math.PI);
+    L.hip.rotation.z = Math.sin(ph)*amp; L.knee.rotation.z = -Math.max(0, Math.cos(ph))*amp*(L.front?-.8:1.1);
+    if (!L.front){ L.hip.rotation.z -= cat.sit*1.2 + cat.loaf*1.3; L.knee.rotation.z += cat.sit*2.2 + cat.loaf*2.3; }
+    else { L.hip.rotation.z -= cat.sit*.15 - cat.loaf*1.35; L.knee.rotation.z += cat.loaf*-.3; }
+  }
+  const pitch = cat.state==='climb' ? 1.35 : cat.state==='descend' ? -1.2 : (cat.sit*.55 - cat.loaf*.05 + (run ? Math.sin(cat.phase)*.1 : 0));
+  CP.root.rotation.z = pitch; CP.root.position.x = .2*Math.sin(pitch)*(climbing?1:0);
+  CP.root.position.y = Math.abs(Math.sin(cat.phase))*amp*.025 + hopY - cat.sit*.06 - cat.loaf*.12 + (climbing ? .2*(1-Math.cos(pitch)) : 0);
+  CP.neck.rotation.z = -cat.sit*.45 + cat.loaf*.25 - cat.groom*(.6 + Math.sin(now/180)*.25) + (cat.state==='intree' ? -.5 : 0);
+  CP.head.rotation.y = cat.groom ? Math.sin(now/400)*.3 : (dd < 3 && !climbing ? THREE.MathUtils.clamp(Math.atan2(-(dog.y-cat.y), dog.x-cat.x) - cat.yaw, -.9, .9)*.6 : Math.sin(now/1700)*.25);
+  // tail: up and curled while walking, puffed straight out when fleeing, hanging from the branch in the tree, wrapped round when sitting
+  const tailUp = cat.state==='flee' ? .35 : cat.state==='intree' ? -1.3 : sitting ? -.9 : cat.loaf ? -.2 : 1.15;
+  CP.tail.rotation.z += (tailUp - CP.tail.rotation.z) * Math.min(1, dt*5);
+  const puff = cat.state==='flee' || climbing ? 1.7 : 1; CP.tail.scale.y += (puff - CP.tail.scale.y)*Math.min(1,dt*6); CP.tail.scale.z = CP.tail.scale.y;
+  for (const [i,seg] of CP.tailSegs.entries()){
+    seg.rotation.z = cat.state==='flee' ? 0 : sitting ? -.05 : -.14 + (i>5 ? -.25 : 0);
+    seg.rotation.y = Math.sin(now/(cat.state==='intree'?500:700) - i*.5)*(sitting ? .25 : .12) + (sitting && i>3 ? .32 : 0); }
+  catGroup.position.set(cat.x, cat.h + cat.extraY, cat.y); catGroup.rotation.y = cat.yaw;
 }
 
 /* ================= SWIMMER: a man doing front crawl, lapping the pool ================= */
@@ -3083,7 +3243,7 @@ function loop(now){
   if (!photo) for (const c of clouds.children){ c.position.x += c.userData.speed*dt; if (c.position.x > 1800) c.position.x -= 3600; }
   if (camera===persp && !walk.on) controls.update(); if (camera===ortho) ocontrols.update();
   updateWalk(dt);
-  if (!photo){ updateDog(dt, now); updateSwimmer(dt, now); }
+  if (!photo){ updateDog(dt, now); updateCat(dt, now); updateSwimmer(dt, now); }
   if (!photo){ windU.uTime.value = now/1000; waterNormal.offset.set(now*1.2e-5, now*0.8e-5); }
   if (envDirty && now-lastEnv > 250) updateEnv();
   if (!photo && Q().reflect && reflDirty && now-lastRefl > 600) updateReflections();

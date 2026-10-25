@@ -1554,29 +1554,232 @@ const cityGroup = new THREE.Group(); scene.add(cityGroup);
   bg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   const blds = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({vertexColors:true, map:facade, roughness:.9}));
   blds.castShadow = blds.receiveShadow = true; cityGroup.add(blds);
-  // neighbouring houses: the same house as K-134, built from its exterior and merged per material.
-  // Windows get dark reflective glass (there is no interior behind them). Houses near the plot cast shadows; distant ones
-  // skip the window frames and the ambient-occlusion pass, which cannot be seen from that far.
-  const sh = new THREE.Group(); exteriorShell(sh, sh, sh);
-  const nGlass = new THREE.MeshStandardMaterial({color:0x27323a, metalness:.6, roughness:.07, side:THREE.DoubleSide});
-  sh.traverse(m=>{ if (m.isMesh){ if (m.material===mat.glass) m.material = nGlass; m.castShadow = m.material!==nGlass; m.receiveShadow = true; } });
-  mergeMeshes(sh); sh.updateMatrixWorld(true);
-  const parts = sh.children.filter(m=>m.isMesh), buckets = new Map(), M = new THREE.Matrix4(), T = new THREE.Matrix4();
-  for (const h of CITY.h){
-    M.set(h[0],0,h[1],h[4], 0,1,0,0, h[2],0,h[3],h[5], 0,0,0,1);
-    const flip = h[0]*h[3] - h[1]*h[2] < 0, near = Math.hypot(h[4]+h[0]*7.7+h[1]*4.4 + 3, h[5]+h[2]*7.7+h[3]*4.4 - 5) < 60;
-    for (const m of parts){
-      if (!near && m.material===mat.frame) continue;
-      const g = m.geometry.clone().applyMatrix4(T.multiplyMatrices(M, m.matrixWorld)); if (flip) flipWinding(g);
-      const key = m.material.uuid + (g.index ? 'i' : 'n') + (near ? 's' : '');
-      if (!buckets.has(key)) buckets.set(key, {m, near, list:[]}); buckets.get(key).list.push(g);
-    }
-  }
-  for (const {m, near, list} of buckets.values()){
-    const g = mergeGeometries(list, false); if (!g) continue;
-    const mesh = new THREE.Mesh(g, m.material); mesh.castShadow = near && m.castShadow; mesh.receiveShadow = true; mesh.userData.noAO = !near; cityGroup.add(mesh);
-  }
 })();
+
+/* ---------- neighbouring houses: levels of detail, impostors and quadtree occlusion culling ----------
+   Every house is the same K-134, so three versions are prepared once and drawn instanced:
+   LOD0 (near): the full exterior with its colours baked into the vertices (one material plus glass);
+   LOD1 (middle distance): a massing model of about 150 triangles with flat window and door panels;
+   LOD2 (far): impostors – pictures of the house rendered at start-up from 16 directions × 3 heights,
+   storing colour and surface direction so the sun still lights them correctly.
+   Each frame a quadtree is walked front to back from the camera: cells outside the view are skipped, and an
+   occlusion horizon (the skyline of the buildings already passed) hides anything that lies completely below it.
+   Houses near the plot also cast shadows through invisible LOD1 stand-ins, so their shadows never depend on the view. */
+const nb = {ready:false, stats:{full:0, simple:0, imp:0, off:0, occ:0}};
+function buildNeighbours(){
+  const H = CITY.h; if (!H?.length) return;
+  // --- LOD0: the real exterior, baked
+  const sh = new THREE.Group(); exteriorShell(sh, sh, sh); sh.updateMatrixWorld(true);
+  const op = [], gl = [];
+  sh.traverse(m=>{ if (!m.isMesh || m.material===mat.slab) return;                  // the foundation stays under ground
+    let g = m.geometry.clone().applyMatrix4(m.matrixWorld); if (g.index) g = g.toNonIndexed();
+    for (const k of Object.keys(g.attributes)) if (k!=='position' && k!=='normal') g.deleteAttribute(k);
+    if (m.material===mat.glass){ gl.push(g); return; }
+    const c = m.material.color, n = g.attributes.position.count, a = new Float32Array(n*3);
+    for (let i=0;i<n;i++){ a[i*3]=c.r; a[i*3+1]=c.g; a[i*3+2]=c.b; } g.setAttribute('color', new THREE.BufferAttribute(a, 3)); op.push(g); });
+  const lod0 = mergeGeometries(op), lod0g = mergeGeometries(gl);
+  lod0.computeBoundingBox(); const bb = lod0.boundingBox, C = bb.getCenter(new THREE.Vector3()), R = bb.getSize(new THREE.Vector3()).length()/2 + .2;
+  // --- LOD1: massing model
+  const pos = [], nor = [], col = [], put = (p, n, c)=>{ pos.push(p[0],p[1],p[2]); nor.push(n[0],n[1],n[2]); col.push(c.r,c.g,c.b); };
+  const ccw = poly=>{ let s2 = 0; for (let i=0;i<poly.length;i++){ const [x1,y1] = poly[i], [x2,y2] = poly[(i+1)%poly.length]; s2 += x1*y2 - x2*y1; } return s2 > 0; };
+  const cGlass = new THREE.Color(0x2b363d), cKind = {garage:mat.garage.color, entry:mat.dark.color};
+  const walls = (poly, y0, y1, opens, band)=>{ const out = ccw(poly);
+    for (let i=0;i<poly.length;i++){
+      const [ax,az] = poly[i], [bx,bz] = poly[(i+1)%poly.length], L = Math.hypot(bx-ax, bz-az), ux = (bx-ax)/L, uz = (bz-az)/L;
+      const n = out ? [uz, 0, -ux] : [-uz, 0, ux];
+      const q = (s0, s1, ya, yb, c, off=0)=>{ const P = (s, y)=>[ax+ux*s+n[0]*off, y, az+uz*s+n[2]*off];
+        const A0 = P(s0,ya), A1 = P(s0,yb), B1 = P(s1,yb), B0 = P(s1,ya);
+        for (const p of (out ? [A0,A1,B1, A0,B1,B0] : [A0,B0,B1, A0,B1,A1])) put(p, n, c); };
+      q(0, L, y0, y1-band, mat.render.color); if (band) q(0, L, y1-band, y1, mat.coping.color);
+      for (const o of (opens[i]||[])) q(o.s0, o.s1, o.b, o.t, cKind[o.k] || cGlass, .02);
+    } };
+  const cap = (poly, y, c)=>{ for (const [i,j,k] of THREE.ShapeUtils.triangulateShape(poly.map(([x,z])=>new THREE.Vector2(x,z)), [])){
+      let t = [poly[i], poly[j], poly[k]]; if ((t[1][1]-t[0][1])*(t[2][0]-t[0][0]) - (t[1][0]-t[0][0])*(t[2][1]-t[0][1]) < 0) t = [t[0], t[2], t[1]];
+      for (const [x,z] of t) put([x,y,z], [0,1,0], c); } };
+  walls(GF_POLY, -0.25, 3.15, GF_OPEN, 0); walls(UF_POLY, 3.15, 6.94, UF_OPEN, .12);
+  cap(GF_POLY, 3.15, mat.concrete.color); cap(UF_POLY, 6.94, mat.roof.color);
+  for (const [w,h,d,x,y,z,c] of [[.4,1.215,1.61,.24,3.7575,4.645,mat.render.color],[2.49,1.215,.42,1.285,3.7575,5.24,mat.render.color],[1,.2,4.3,13.97,2.3,2.65,mat.dark.color]]){
+    const g = new THREE.BoxGeometry(w,h,d).translate(x,y,z).toNonIndexed(), P = g.attributes.position, N = g.attributes.normal;
+    for (let i=0;i<P.count;i++) put([P.getX(i),P.getY(i),P.getZ(i)], [N.getX(i),N.getY(i),N.getZ(i)], c); }
+  const lod1 = new THREE.BufferGeometry();
+  lod1.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); lod1.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); lod1.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  // mirrored copies of each version, so every instance matrix is a plain rotation (front faces stay front faces)
+  const mirror = g=>{ const m = g.clone().applyMatrix4(new THREE.Matrix4().makeScale(1, 1, -1)); flipWinding(m); return m; };
+  const opMat = new THREE.MeshStandardMaterial({vertexColors:true, roughness:.82, metalness:.06});
+  const glMat = new THREE.MeshStandardMaterial({color:0x27323a, metalness:.6, roughness:.07, side:THREE.DoubleSide});
+  const l1Mat = new THREE.MeshStandardMaterial({vertexColors:true, roughness:.86});
+  const inst = (geo, m, noAO)=>{ const im = new THREE.InstancedMesh(geo, m, H.length); im.count = 0; im.frustumCulled = false; im.receiveShadow = true;
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.userData.noAO = !!noAO; cityGroup.add(im); return im; };
+  nb.im = [[inst(lod0, opMat), inst(mirror(lod0), opMat)], [inst(lod0g, glMat), inst(mirror(lod0g), glMat)], [inst(lod1, l1Mat, true), inst(mirror(lod1), l1Mat, true)]];
+  nb.lod1 = [lod1, mirror(lod1)]; nb.l1Mat = l1Mat;
+  // --- LOD2: impostor atlas (albedo + object-space normals), 16 azimuths × 3 elevations, 128 px tiles
+  const AZ = 16, EL = [12, 35, 62], T = 128, rtA = new THREE.WebGLRenderTarget(AZ*T, EL.length*T), rtN = new THREE.WebGLRenderTarget(AZ*T, EL.length*T);
+  rtA.texture.colorSpace = THREE.SRGBColorSpace;
+  for (const rt of [rtA, rtN]){ rt.texture.generateMipmaps = true; rt.texture.minFilter = THREE.LinearMipmapLinearFilter; rt.texture.anisotropy = 4; }
+  const aScene = new THREE.Scene(), aOp = new THREE.Mesh(lod0), aGl = new THREE.Mesh(lod0g); aScene.add(aOp, aGl);
+  const albOp = new THREE.MeshBasicMaterial({vertexColors:true}), albGl = new THREE.MeshBasicMaterial({color:0x2c3a44});
+  const nrm = new THREE.ShaderMaterial({side:THREE.DoubleSide, vertexShader:`varying vec3 vN; void main(){ vN = normal; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+    fragmentShader:`varying vec3 vN; void main(){ vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n; gl_FragColor = vec4(n*.5+.5, 1.); }`});
+  const oc = new THREE.OrthographicCamera(-R, R, R, -R, .1, 200), prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha(), prevAuto = renderer.autoClear;
+  renderer.autoClear = false; renderer.setClearColor(0x000000, 0);
+  for (const [rt, mo, mg] of [[rtA, albOp, albGl], [rtN, nrm, nrm]]){
+    aOp.material = mo; aGl.material = mg;
+    rt.viewport.set(0, 0, rt.width, rt.height); rt.scissorTest = false; renderer.setRenderTarget(rt); renderer.clear();
+    EL.forEach((el, j)=>{ for (let i=0;i<AZ;i++){
+      const az = i/AZ*Math.PI*2, e = el*Math.PI/180;
+      oc.position.set(C.x + Math.cos(e)*Math.cos(az)*80, C.y + Math.sin(e)*80, C.z + Math.cos(e)*Math.sin(az)*80); oc.up.set(0,1,0); oc.lookAt(C); oc.updateMatrixWorld();
+      rt.viewport.set(i*T, j*T, T, T); rt.scissor.set(i*T, j*T, T, T); rt.scissorTest = true; renderer.setRenderTarget(rt); renderer.render(aScene, oc); } });
+    rt.scissorTest = false;
+  }
+  renderer.setRenderTarget(null); renderer.autoClear = prevAuto; renderer.setClearColor(prevClear, prevAlpha);
+  const ig = new THREE.InstancedBufferGeometry();
+  ig.setAttribute('position', new THREE.Float32BufferAttribute([-1,-1,0, 1,-1,0, 1,1,0, -1,1,0], 3)); ig.setIndex([0,1,2, 0,2,3]);
+  nb.iCenter = new THREE.InstancedBufferAttribute(new Float32Array(H.length*3), 3).setUsage(THREE.DynamicDrawUsage);
+  nb.iAxes = new THREE.InstancedBufferAttribute(new Float32Array(H.length*4), 4).setUsage(THREE.DynamicDrawUsage);
+  ig.setAttribute('iCenter', nb.iCenter); ig.setAttribute('iAxes', nb.iAxes); ig.instanceCount = 0;
+  nb.impU = {tAlb:{value:rtA.texture}, tNrm:{value:rtN.texture}, uR:{value:R}, uGrid:{value:new THREE.Vector2(AZ, EL.length)},
+    uSunDir:{value:new THREE.Vector3(0,1,0)}, uSun:{value:new THREE.Color()}, uSky:{value:new THREE.Color()}, uGround:{value:new THREE.Color()},
+    uEnvTop:{value:new THREE.Color()}, uEnvHor:{value:new THREE.Color()}, uEnvGnd:{value:new THREE.Color()}, uSnow:snowU.uSnow,
+    uFog:{value:new THREE.Color()}, uFogNear:{value:400}, uFogFar:{value:2200}};
+  const impMat = new THREE.ShaderMaterial({uniforms:nb.impU,
+    vertexShader:`attribute vec3 iCenter; attribute vec4 iAxes; uniform float uR; uniform vec2 uGrid;
+      varying vec2 vUv0; varying vec2 vUv1; varying float vBlend; varying vec3 vAx; varying vec3 vAz; varying float vDepth;
+      void main(){
+        vec3 toCam = cameraPosition - iCenter; float d = length(toCam); vec3 v = toCam/d;
+        vec3 right = normalize(cross(vec3(0.,1.,0.), v)); vec3 up = cross(v, right);
+        float lx = dot(v.xz, iAxes.xy), lz = dot(v.xz, iAxes.zw), det = iAxes.x*iAxes.w - iAxes.z*iAxes.y;
+        float az = atan(lz, lx); if (az < 0.) az += 6.2831853;
+        float fa = az/6.2831853*uGrid.x, a0 = floor(fa); vBlend = smoothstep(.3, .7, fa - a0); float a1 = mod(a0+1., uGrid.x); a0 = mod(a0, uGrid.x);   // short crossfade between neighbouring views
+        float el = degrees(asin(clamp(v.y, -1., 1.))), e = el < 23. ? 0. : (el < 48. ? 1. : 2.);
+        vec2 uv = position.xy*.5 + .5; if (det < 0.) uv.x = 1. - uv.x;          // a mirrored house shows the mirrored picture
+        vUv0 = (vec2(a0, e) + uv)/uGrid; vUv1 = (vec2(a1, e) + uv)/uGrid;
+        vAx = vec3(iAxes.x, 0., iAxes.y); vAz = vec3(iAxes.z, 0., iAxes.w);
+        vec3 p = iCenter + v*uR + (right*position.x + up*position.y)*uR*(d - uR)/d;   // card in front of the house, same apparent size
+        vec4 mv = viewMatrix*vec4(p, 1.); vDepth = -mv.z; gl_Position = projectionMatrix*mv;
+      }`,
+    fragmentShader:`uniform sampler2D tAlb; uniform sampler2D tNrm; uniform vec3 uSunDir; uniform vec3 uSun; uniform vec3 uSky; uniform vec3 uGround;
+      uniform vec3 uEnvTop; uniform vec3 uEnvHor; uniform vec3 uEnvGnd; uniform float uSnow; uniform vec3 uFog; uniform float uFogNear; uniform float uFogFar;
+      varying vec2 vUv0; varying vec2 vUv1; varying float vBlend; varying vec3 vAx; varying vec3 vAz; varying float vDepth;
+      void main(){
+        vec4 alb = mix(texture2D(tAlb, vUv0), texture2D(tAlb, vUv1), vBlend); if (alb.a < .5) discard;
+        vec3 n = mix(texture2D(tNrm, vUv0).xyz, texture2D(tNrm, vUv1).xyz, vBlend)*2. - 1.;
+        vec3 nw = normalize(vAx*n.x + vec3(0., n.y, 0.) + vAz*n.z);
+        vec3 env = nw.y > 0. ? mix(uEnvHor, uEnvTop, nw.y) : mix(uEnvHor, uEnvGnd, -nw.y);
+        vec3 base = mix(alb.rgb, vec3(.92), smoothstep(.55, .9, nw.y)*uSnow);
+        vec3 c = base*((uSun*max(dot(nw, uSunDir), 0.) + mix(uGround, uSky, nw.y*.5 + .5))*.3183 + env);
+        gl_FragColor = vec4(mix(c, uFog, smoothstep(uFogNear, uFogFar, vDepth)), 1.);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`});
+  nb.imp = new THREE.Mesh(ig, impMat); nb.imp.frustumCulled = false; nb.imp.userData.noAO = true; cityGroup.add(nb.imp);
+  // --- per-house data, shadow stand-ins, quadtree
+  const ent = [], proxy = [], P = new THREE.Vector3();
+  const inset = insetPoly(GF_POLY, .5);
+  const footprint = (M, t, poly)=>poly.map(([x,z])=>[M[0]*x + M[1]*z + t[0], M[2]*x + M[3]*z + t[1]]);
+  const bounds = (pts, h)=>{ let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for (const [x,z] of pts){ x0=Math.min(x0,x); x1=Math.max(x1,x); z0=Math.min(z0,z); z1=Math.max(z1,z); } return [x0,x1,z0,z1,h]; };
+  nb.houses = H.map(([a,b,c,d,tx,ty])=>{
+    const mir = a*d - b*c < 0 ? 1 : 0, ra = a, rb = mir ? -b : b, rc = c, rd = mir ? -d : d;
+    const m4 = new THREE.Matrix4().set(ra,0,rb,tx, 0,1,0,0, rc,0,rd,ty, 0,0,0,1);
+    const h = {m4, mir, axes:[a, c, b, d], c:new THREE.Vector3(a*C.x + b*C.z + tx, C.y, c*C.x + d*C.z + ty), lod:-1};
+    const e = {house:h, x:h.c.x, z:h.c.z, b:bounds(footprint([a,b,c,d],[tx,ty],GF_POLY), 7.7), occ:footprint([a,b,c,d],[tx,ty],inset), oh:6.4};
+    ent.push(e);
+    if (Math.hypot(h.c.x + 3, h.c.z - 5) < 75) proxy.push(nb.lod1[mir].clone().applyMatrix4(m4));
+    return h; });
+  for (const b of CITY.b){ const pts = []; for (let i=1;i<b.length;i+=2) pts.push([b[i], b[i+1]]);
+    const bb2 = bounds(pts, b[0]); ent.push({x:(bb2[0]+bb2[1])/2, z:(bb2[2]+bb2[3])/2, b:bb2, occ:pts, oh:b[0] - .3}); }
+  { const own = GF_POLY.map(p=>[p[0], p[1]]); ent.push({x:7.7, z:4.4, b:bounds(own, 6.9), occ:insetPoly(GF_POLY, .3), oh:6.5}); }   // K-134 itself hides what is behind it
+  if (proxy.length){ const pm = new THREE.Mesh(mergeGeometries(proxy), new THREE.MeshBasicMaterial({colorWrite:false, depthWrite:false}));
+    pm.castShadow = true; pm.userData.noAO = true; cityGroup.add(pm); }
+  const tree = (list, depth)=>{
+    const bb2 = [1e9,-1e9,1e9,-1e9,0]; let nh = 0;
+    for (const e of list){ bb2[0]=Math.min(bb2[0],e.b[0]); bb2[1]=Math.max(bb2[1],e.b[1]); bb2[2]=Math.min(bb2[2],e.b[2]); bb2[3]=Math.max(bb2[3],e.b[3]); bb2[4]=Math.max(bb2[4],e.b[4]); if (e.house) nh++; }
+    const n = {bb:bb2, nh, box:new THREE.Box3(new THREE.Vector3(bb2[0], -.3, bb2[2]), new THREE.Vector3(bb2[1], bb2[4], bb2[3]))};
+    if (list.length <= 6 || depth >= 7){ n.leaf = list; for (const e of list) e.box = new THREE.Box3(new THREE.Vector3(e.b[0], -.3, e.b[2]), new THREE.Vector3(e.b[1], e.b[4], e.b[3])); return n; }
+    n.sx = (bb2[0]+bb2[1])/2; n.sz = (bb2[2]+bb2[3])/2;
+    const q = [[],[],[],[]]; for (const e of list) q[(e.x >= n.sx ? 1 : 0) + (e.z >= n.sz ? 2 : 0)].push(e);
+    if (q.some(l=>l.length === list.length)){ n.leaf = list; for (const e of list) e.box = new THREE.Box3(new THREE.Vector3(e.b[0], -.3, e.b[2]), new THREE.Vector3(e.b[1], e.b[4], e.b[3])); return n; }
+    n.kids = q.map(l=>l.length ? tree(l, depth+1) : null); return n; };
+  nb.root = tree(ent, 0); nb.ready = true;
+}
+const NB_HZ = 192, nbHorizon = new Float32Array(NB_HZ), nbFrustum = new THREE.Frustum(), nbPS = new THREE.Matrix4();
+const nbLists = [[[],[]], [[],[]], []];
+function nbProj(x, y, z, out){ const e = nbPS.elements, w = e[3]*x + e[7]*y + e[11]*z + e[15];
+  out[0] = (e[0]*x + e[4]*y + e[8]*z + e[12])/w; out[1] = (e[1]*x + e[5]*y + e[9]*z + e[13])/w; out[2] = w; return out; }
+const _p = [0,0,0], _q = [0,0,0], _r = [0,0,0], _s = [0,0,0];
+function nbOccluded(b){ // is this box completely below the occlusion horizon?
+  let x0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (let i=0;i<8;i++){ nbProj(i&1 ? b[1] : b[0], i&2 ? b[4] : -.3, i&4 ? b[3] : b[2], _p); if (_p[2] < .3) return false;
+    x0 = Math.min(x0, _p[0]); x1 = Math.max(x1, _p[0]); y1 = Math.max(y1, _p[1]); }
+  const c0 = Math.max(0, Math.floor((x0+1)*.5*NB_HZ)), c1 = Math.min(NB_HZ-1, Math.floor((x1+1)*.5*NB_HZ));
+  for (let c=c0;c<=c1;c++) if (nbHorizon[c] < y1) return false;
+  return c1 >= c0;
+}
+function nbOccluder(e){ // raise the horizon along the top edges of a building's walls (only where the whole wall covers the column)
+  const P = e.occ, h = e.oh;
+  for (let i=0;i<P.length;i++){
+    const [ax,az] = P[i], [bx,bz] = P[(i+1)%P.length];
+    nbProj(ax,h,az,_p); nbProj(bx,h,bz,_q); nbProj(ax,0,az,_r); nbProj(bx,0,bz,_s);
+    if (_p[2] < .3 || _q[2] < .3 || _r[2] < .3 || _s[2] < .3) continue;
+    const lo = Math.max(Math.min(_p[0],_q[0]), Math.min(_r[0],_s[0])), hi = Math.min(Math.max(_p[0],_q[0]), Math.max(_r[0],_s[0]));
+    if (hi <= lo) continue;
+    const c0 = Math.max(0, Math.ceil((lo+1)*.5*NB_HZ - .5)), c1 = Math.min(NB_HZ-1, Math.floor((hi+1)*.5*NB_HZ - .5)), dx = _q[0]-_p[0];
+    for (let c=c0;c<=c1;c++){ const xc = (c+.5)/NB_HZ*2 - 1, y = Math.abs(dx) > 1e-6 ? _p[1] + (_q[1]-_p[1])*(xc-_p[0])/dx : Math.min(_p[1], _q[1]);
+      if (y > nbHorizon[c]) nbHorizon[c] = y; }
+  }
+}
+function updateNeighbours(){
+  if (!nb.ready || !cityGroup.visible || nb.pt) return;
+  const cam = camera, S = nb.stats; cam.updateMatrixWorld();
+  nbPS.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); nbFrustum.setFromProjectionMatrix(nbPS);
+  const cp = cam.position, ortho = !cam.isPerspectiveCamera;
+  // the horizon test assumes upright views of buildings standing on the ground: off for plan view and steep aerial views
+  const dir = cam.getWorldDirection(_v3), occl = !ortho && dir.y > -.6 && cp.y < 45;
+  nbHorizon.fill(-2); S.full = S.simple = S.imp = S.off = S.occ = 0;
+  for (const l of [nbLists[0][0], nbLists[0][1], nbLists[1][0], nbLists[1][1], nbLists[2]]) l.length = 0;
+  const visit = n=>{
+    if (!nbFrustum.intersectsBox(n.box)){ S.off += n.nh; return; }
+    if (occl && nbOccluded(n.bb)){ S.occ += n.nh; return; }
+    if (n.leaf){
+      const L = n.leaf.slice().sort((a,b)=>Math.hypot(a.x-cp.x, a.z-cp.z) - Math.hypot(b.x-cp.x, b.z-cp.z));
+      for (const e of L){ const h = e.house; if (!h) continue;
+        if (!nbFrustum.intersectsBox(e.box)){ S.off++; continue; }
+        if (occl && nbOccluded(e.b)){ S.occ++; continue; }
+        const d = ortho ? Math.hypot(h.c.x - ocontrols.target.x, h.c.z - ocontrols.target.z) : h.c.distanceTo(cp);
+        let l = h.lod;                                          // switch levels with a little hysteresis so they do not flicker
+        if (l < 0) l = d < 70 ? 0 : d < 220 ? 1 : 2;
+        else if (l === 0 && d > 76) l = 1; else if (l === 1 && d < 64) l = 0; else if (l === 1 && d > 228) l = 2; else if (l === 2 && d < 212) l = 1;
+        if (ortho && l === 2) l = 1;
+        h.lod = l; if (l === 2) nbLists[2].push(h); else nbLists[l][h.mir].push(h);
+        if (l === 0) S.full++; else if (l === 1) S.simple++; else S.imp++;
+      }
+      if (occl) for (const e of L) nbOccluder(e);
+      return;
+    }
+    const q = (cp.x >= n.sx ? 1 : 0) + (cp.z >= n.sz ? 2 : 0);          // front-to-back: the camera's quadrant first, the opposite one last
+    for (const k of [q, q^1, q^2, q^3]) if (n.kids[k]) visit(n.kids[k]);
+  };
+  visit(nb.root);
+  const fill = (im, list)=>{ for (let i=0;i<list.length;i++) im.setMatrixAt(i, list[i].m4); im.count = list.length; im.instanceMatrix.needsUpdate = true; };
+  for (const v of [0,1]){ fill(nb.im[0][v], nbLists[0][v]); fill(nb.im[1][v], nbLists[0][v]); fill(nb.im[2][v], nbLists[1][v]); }
+  const I = nbLists[2], C3 = nb.iCenter.array, A4 = nb.iAxes.array;
+  for (let i=0;i<I.length;i++){ const h = I[i]; C3[i*3] = h.c.x; C3[i*3+1] = h.c.y; C3[i*3+2] = h.c.z; A4.set(h.axes, i*4); }
+  nb.iCenter.needsUpdate = nb.iAxes.needsUpdate = true; nb.imp.geometry.instanceCount = I.length;
+  // impostor lighting follows the scene's sun, sky light, sky environment and fog
+  const U = nb.impU;
+  U.uSunDir.value.copy(sun.position).sub(sun.target.position).normalize();
+  U.uSun.value.copy(sun.color).multiplyScalar(sun.visible ? sun.intensity : 0);
+  U.uSky.value.copy(hemi.color).multiplyScalar(hemi.intensity); U.uGround.value.copy(hemi.groundColor).multiplyScalar(hemi.intensity);
+  U.uEnvTop.value.copy(envSkyMat.uniforms.top.value); U.uEnvHor.value.copy(envSkyMat.uniforms.horizon.value); U.uEnvGnd.value.copy(envGround.material.color);
+  if (scene.fog){ U.uFog.value.copy(scene.fog.color); U.uFogNear.value = scene.fog.near; U.uFogFar.value = scene.fog.far; }
+}
+const _v3 = new THREE.Vector3();
+function nbForPhotoPT(on){ // the path tracer cannot draw instanced meshes: swap in one static LOD1 mesh while it runs
+  if (!nb.ready) return;
+  nb.pt = on;
+  for (const m of [...nb.im.flat(), nb.imp]) m.visible = !on;
+  if (on){ const geos = nb.houses.map(h=>nb.lod1[h.mir].clone().applyMatrix4(h.m4)); nb.ptMesh = new THREE.Mesh(mergeGeometries(geos), nb.l1Mat); cityGroup.add(nb.ptMesh); }
+  else if (nb.ptMesh){ cityGroup.remove(nb.ptMesh); nb.ptMesh.geometry.dispose(); nb.ptMesh = null; }
+}
 const fences = new THREE.Group(); scene.add(fences);
 const plotLineGroup = new THREE.Group(); scene.add(plotLineGroup);
 const terrainGroup = new THREE.Group(); scene.add(terrainGroup);
@@ -2561,7 +2764,9 @@ function updateStats(now, frameMs){
   stats.frames++; stats.calls += renderer.info.render.calls; stats.tris += renderer.info.render.triangles; stats.worst = Math.max(stats.worst, frameMs);
   if (now - stats.t < 500) return;
   const n = stats.frames || 1, fps = n*1000/(now - stats.t);
-  statsEl.textContent = `${fps.toFixed(0)} fps · worst ${stats.worst.toFixed(0)} ms\n${Math.round(stats.calls/n)} draw calls · ${(stats.tris/n/1e6).toFixed(2)} M tris\n${(renderer.getPixelRatio()).toFixed(2)}× pixels${dyn.scale<1?' (moving)':''} · ${qName}`;
+  const N = nb.stats;
+  statsEl.textContent = `${fps.toFixed(0)} fps · worst ${stats.worst.toFixed(0)} ms\n${Math.round(stats.calls/n)} draw calls · ${(stats.tris/n/1e6).toFixed(2)} M tris\n${(renderer.getPixelRatio()).toFixed(2)}× pixels${dyn.scale<1?' (moving)':''} · ${qName}`
+    + (nb.ready && cityGroup.visible ? `\nhouses: ${N.full} full · ${N.simple} simple · ${N.imp} impostor\nculled: ${N.off} off-screen · ${N.occ} hidden behind` : '');
   Object.assign(stats, {t:now, frames:0, calls:0, tris:0, worst:0});
 }
 
@@ -3207,6 +3412,7 @@ async function startPathTrace(){
     pt.minSamples = 3; pt.fadeDuration = 400; pt.renderScale = Math.min(1, 1/renderer.getPixelRatio()); pt.tiles.set(3,3);
     pt.dynamicLowRes = true; if ('filterGlossyFactor' in pt) pt.filterGlossyFactor = .5;
     // the path tracer pads meshes without vertex colours with RGBA colours, so RGB ones are widened to match while it reads the scene
+    nbForPhotoPT(true);
     const rgb = new Map();
     scene.traverse(m=>{ const g = m.isMesh && m.visible && m.geometry, c = g && g.attributes.color; if (!c || c.itemSize!==3 || rgb.has(g)) return;
       const a = new Float32Array(c.count*4); for (let i=0;i<c.count;i++){ a[i*4]=c.getX(i); a[i*4+1]=c.getY(i); a[i*4+2]=c.getZ(i); a[i*4+3]=1; }
@@ -3214,7 +3420,7 @@ async function startPathTrace(){
     try { pt.setScene(scene, persp); } finally { for (const [g, c] of rgb) g.setAttribute('color', c); }
     photo = {kind:'pt', pt, env, hidden, prev};
   } catch(e){
-    scene.environment = envRT ? envRT.texture : null; scene.background = prev.bg; scene.fog = prev.fog; mat.lawn.color.copy(prev.lawn); hidden.forEach(o=>o.visible=true); env.dispose();
+    scene.environment = envRT ? envRT.texture : null; scene.background = prev.bg; scene.fog = prev.fog; mat.lawn.color.copy(prev.lawn); hidden.forEach(o=>o.visible=true); env.dispose(); nbForPhotoPT(false);
     console.error(e); photoBtn.setAttribute('aria-pressed','false'); setStatus('Path tracing is not supported on this device: '+e.message); return;
   }
   photoCommon();
@@ -3229,7 +3435,7 @@ function stopPhoto(){
     resize();
   } else {
     try { P.pt.dispose(); } catch(e){}
-    P.env.dispose(); P.hidden.forEach(o=>o.visible=true); mat.lawn.color.copy(P.prev.lawn);
+    P.env.dispose(); P.hidden.forEach(o=>o.visible=true); mat.lawn.color.copy(P.prev.lawn); nbForPhotoPT(false);
     scene.environment = envRT ? envRT.texture : null; scene.background = P.prev.bg; scene.fog = P.prev.fog; envDirty = true;
   }
   labelsEl.hidden = false; photoBar.hidden = true; photoBtn.setAttribute('aria-pressed','false');
@@ -3967,7 +4173,7 @@ function loop(now){
   const moving = trackMotion(now);
   if (envDirty && now-lastEnv > 250) updateEnv();
   if (!photo && Q().reflect && reflDirty && now-lastRefl > (moving ? 1500 : 600)) updateReflections();
-  if (!photo){ scheduleShadows(now, moving); schedulePost(moving); scheduleResolution(moving, frameMs); }
+  if (!photo){ scheduleShadows(now, moving); schedulePost(moving); scheduleResolution(moving, frameMs); updateNeighbours(); }
   renderFrame();
   if (photo && now-photoStatusT > 250){ photoStatusT = now;
     if (photo.kind==='pt') setStatus(`Path tracing (beta) · ${Math.floor(photo.pt.samples)} samples · grain clears over time · click the view to leave`);
@@ -3975,6 +4181,7 @@ function loop(now){
   updateLabels(); updateCompass();
   requestAnimationFrame(loop);
 }
+buildNeighbours();
 renderBuild(); renderLayers(); syncGardenUI(); applyLayers(); rebuildAll(); updateSun(); setView('aerial'); applyQuality(); pushHistory();
 let savedMode='view'; try{ savedMode = localStorage.getItem(STORE_KEY+'-mode') || 'view'; }catch(e){} ui._lastMode = savedMode; setMode(savedMode);
 autoArmed = true;

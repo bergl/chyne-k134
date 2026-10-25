@@ -20,6 +20,8 @@ Interactive 3D model of house K-134 (Premonstrátů 1000, Chýně) and its garde
   - Parts that share a material are merged into one mesh. The dog, cat, swimmer and lady are rigidly skinned, so each takes only a few draw calls.
   - The sun's shadow map is redrawn only when something changes.
   - While the view moves, ambient occlusion and bloom pause, and the resolution drops if frames are slow.
-  - Layers → Performance stats shows FPS and draw calls.
+  - Neighbouring houses use three levels of detail: the full house when close, a ~150-triangle model at middle distance, and impostors far away. Impostors are pictures pre-rendered from 48 directions, storing colour and surface normals so they light correctly.
+  - A quadtree is walked front to back each frame. It skips areas outside the view, and an occlusion horizon hides houses fully behind closer buildings. Houses near the plot cast shadows through invisible stand-ins, so shadows never depend on the camera.
+  - Layers → Performance stats shows FPS, draw calls, and how many houses are drawn at each level or culled.
 
 The app is a single static `index.html` and uses Three.js 0.160, three-mesh-bvh 0.7.6 and three-gpu-pathtracer 0.0.23 from jsDelivr. To run it locally, open the file in a browser or serve the folder with any static server.

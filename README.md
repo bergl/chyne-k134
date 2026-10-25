@@ -7,9 +7,11 @@ Interactive 3D model of house K-134 (Premonstrátů 1000, Chýně) and its garde
 - **Floors, heights, windows and rooms:** the sales drawings (D17), including the section and elevations.
 - **Plot boundary:** digitised from the survey sketch (662 m² against the registered 657 m²).
 - **Garden layout:** placed from the listing photos, accurate to about ±1 m.
+- **Surrounding Chýně:** building outlines, streets, fields and green areas traced from the OpenStreetMap map (© OpenStreetMap contributors, ODbL). They are placed through the plot's S-JTSK points; the house's own outline in the map lands within 1.5 m of the model. Building heights are estimated from footprint size.
 
 **Rendering:**
 - **Quality levels:** Standard, High and Ultra, chosen in the Sun tab.
+- **Seasons:** one picker in the toolbar. Autumn adds falling leaves and a leaf pile; winter adds snowfall, snow cover and a snowman. Layers can switch the weather off.
 - **Lighting:** image-based lighting from the sky, with ambient occlusion (GTAO) on High and Ultra.
 - **Glass and water:** windows and water reflect the garden live; Ultra adds true refraction.
 - **Plants:** procedural trees and grass that sway in a wind you can adjust.

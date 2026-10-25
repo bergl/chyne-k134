@@ -48,6 +48,20 @@ button{cursor:pointer}
 .seg button:disabled{opacity:.4;cursor:default}
 .seg .lbl{padding:7px 8px 7px 10px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;align-self:center}
 
+.selbox{display:flex;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);backdrop-filter:blur(6px)}
+.selbox .lbl{padding:0 0 0 10px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;cursor:pointer}
+.selbox select{border:0;background-color:transparent;font-weight:500;font-size:13px;padding:7px 28px 7px 7px;appearance:none;-webkit-appearance:none;cursor:pointer;border-radius:var(--r);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237a8a82' stroke-width='1.6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+.selbox select:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.switch{position:relative;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:5px 12px 5px 8px;cursor:pointer;backdrop-filter:blur(6px);font-size:13px;font-weight:500;user-select:none}
+.switch input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.switch .track{width:34px;height:20px;border-radius:99px;background:var(--line);position:relative;transition:background .15s;flex:none}
+.switch .knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:transform .15s}
+.switch input:checked + .track{background:var(--accent)}
+.switch input:checked + .track .knob{transform:translateX(14px)}
+.switch input:focus-visible + .track{outline:2px solid var(--accent);outline-offset:2px}
+#props .x{border:0;background:transparent;font-size:15px;color:var(--muted);padding:2px 4px;border-radius:4px;line-height:1}
+#props .x:hover{color:var(--ink);background:var(--chip)}
 #panel{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:var(--bar-bottom,calc(70px + env(safe-area-inset-top,0px)));bottom:calc(44px + env(safe-area-inset-bottom,0px));width:300px;
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;backdrop-filter:blur(8px);z-index:4}
 .tabs{display:flex;border-bottom:1px solid var(--line);overflow-x:auto}
@@ -137,6 +151,9 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
   .brand span{display:none}
   .seg button{padding:6px 8px;font-size:12px}
   .seg .lbl{display:none}
+  .selbox .lbl{display:none}
+  .selbox select{padding:6px 24px 6px 9px;font-size:12px;background-position:right 8px center}
+  .switch{padding:4px 10px 4px 6px;font-size:12px}
   #toggleTools{display:inline-block}
   #panel{left:0;right:0;width:auto;top:auto;bottom:0;height:46%;border-radius:12px 12px 0 0;padding-bottom:env(safe-area-inset-bottom,0px);
     padding-left:max(0px,env(safe-area-inset-left,0px));padding-right:max(0px,env(safe-area-inset-right,0px))}
@@ -154,27 +171,17 @@ input[type=number]{width:78px;font-family:var(--f-mono);font-size:12px}
 
   <div class="bar">
     <div class="brand"><b>Chýně K-134</b><span>Premonstrátů 1000 · house &amp; garden</span></div>
-    <div class="seg" role="group" aria-label="Camera">
-      <span class="lbl">View</span>
-      <button data-view="aerial" aria-pressed="true">Aerial</button>
-      <button data-view="garden">Garden</button>
-      <button data-view="street">Street</button>
-      <button data-view="balcony">Balcony</button>
-      <button data-view="plan">Plan</button>
-      <button data-view="walk">Walk</button>
-    </div>
-    <div class="seg" role="group" aria-label="House cutaway">
-      <span class="lbl">House</span>
-      <button data-cut="all" aria-pressed="true">Whole</button>
-      <button data-cut="uf">Upper floor</button>
-      <button data-cut="gf">Ground floor</button>
-    </div>
-    <div class="seg" role="group" aria-label="Mode">
-      <span class="lbl">Mode</span>
-      <button data-mode="view" aria-pressed="true">View</button>
-      <button data-mode="edit">Edit</button>
-    </div>
-    <div class="seg" role="group" aria-label="Edit">
+    <div class="selbox"><label class="lbl" for="viewSel">View</label>
+      <select id="viewSel" aria-label="Camera view">
+        <option value="aerial">Aerial</option><option value="garden">Garden</option><option value="street">Street</option>
+        <option value="balcony">Balcony</option><option value="plan">Plan</option><option value="walk">Walk</option>
+      </select></div>
+    <div class="selbox"><label class="lbl" for="cutSel">House</label>
+      <select id="cutSel" aria-label="House cutaway">
+        <option value="all">Whole house</option><option value="uf">Upper floor</option><option value="gf">Ground floor</option>
+      </select></div>
+    <label class="switch" title="Switch between viewing and editing the garden"><input type="checkbox" id="editToggle" role="switch"><span class="track" aria-hidden="true"><span class="knob"></span></span><span class="txt">Edit</span></label>
+    <div class="seg" role="group" aria-label="Tools">
       <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
       <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
       <button id="measure" aria-pressed="false" title="Click two points to measure">Measure</button>
@@ -1699,9 +1706,15 @@ function refreshSelectionBox(){
   selBox.box.setFromObject(g); selBox.visible = true;
 }
 function getObj(id){ return state.objects.find(o=>o.id===id); }
-function select(id){
+function select(id, open){ // left click selects; the properties panel opens only on request (right-click, long-press, double-click, Enter)
+  if (open !== undefined) ui.propsOpen = !!open; else if (id !== ui.selected) ui.propsOpen = false;
+  if (!id) ui.propsOpen = false;
   ui.selected = id; refreshSelectionBox(); renderProps();
+  const o = getObj(id);
+  if (o && ui.edit && !ui.propsOpen) setStatus(`${o.name} selected · drag to move · Q / E rotate · Delete removes · right-click for properties`);
+  else if (!o) setStatus(null);
 }
+function openProps(id){ select(id, true); }
 const fmt = (v,d=2)=>Number(v).toFixed(d);
 function clearanceHTML(o){
   const fp = footprint(o);
@@ -1724,7 +1737,7 @@ function showObjectInfo(o){
 }
 function setMode(m){
   ui.edit = m==='edit';
-  document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed', b.dataset.mode===m));
+  document.getElementById('editToggle').checked = ui.edit;
   document.getElementById('undo').hidden = document.getElementById('redo').hidden = !ui.edit;
   const bt = document.querySelector('[data-tab=build]'); bt.hidden = !ui.edit;
   if (!ui.edit && bt.getAttribute('aria-selected')==='true') document.querySelector('[data-tab=layers]').click();
@@ -1735,14 +1748,14 @@ function setMode(m){
   setStatus(null); ui._lastMode = m;
   try{ localStorage.setItem(STORE_KEY+'-mode', m); }catch(e){}
 }
-document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+document.getElementById('editToggle').onchange = e=>{ setMode(e.target.checked ? 'edit' : 'view'); e.target.blur(); };
 function renderProps(){
   const o = getObj(ui.selected);
-  if (!o){ propsEl.hidden = true; propsEl.innerHTML=''; return; }
+  if (!o || !ui.propsOpen){ propsEl.hidden = true; propsEl.innerHTML=''; return; }
   propsEl.hidden = false;
   const T = TYPES[o.type];
   const num = (key,label,min,max,step,val)=>`<div class="prow"><label for="p-${key}">${label}</label><span class="ctl"><input type="range" id="p-${key}" data-k="${key}" min="${min}" max="${max}" step="${step}" value="${val}"><input type="number" id="p-${key}-n" data-k="${key}" min="${min}" max="${max}" step="${step}" value="${val}"></span></div>`;
-  let h = `<header><input id="p-name" value="${escapeHtml(o.name)}" aria-label="Name"><span class="pill ${o.state}" id="p-state-pill">${o.state}</span></header>`;
+  let h = `<header><input id="p-name" value="${escapeHtml(o.name)}" aria-label="Name"><span class="pill ${o.state}" id="p-state-pill">${o.state}</span><button class="x" id="p-x-close" aria-label="Close properties" title="Close (Esc)">✕</button></header>`;
   h += `<div class="clear" id="p-clear">${clearanceHTML(o)}</div>`;
   h += `<div class="prow"><label for="p-state">Status</label><select id="p-state"><option value="existing"${o.state==='existing'?' selected':''}>Existing</option><option value="proposed"${o.state==='proposed'?' selected':''}>Proposed</option></select></div>`;
   for (const f of T.f){
@@ -1782,8 +1795,9 @@ function renderProps(){
   });
   for (const ax of ['x','y']) propsEl.querySelector('#p-'+ax).onchange = e=>{ const v=parseFloat(e.target.value); if (isFinite(v)){ o[ax]=v; placeOrRebuild(o,true); pushHistory(); } };
   propsEl.querySelector('#p-del').onclick = ()=>{ removeObj(o.id); };
-  propsEl.querySelector('#p-dup').onclick = ()=>{ const c = JSON.parse(JSON.stringify(o)); c.id = uid(); c.x += 1; c.y += 1; c.name += ' (copy)'; state.objects.push(c); rebuildObject(c); if (TYPES[c.type].hole) buildTerrainAndPlace(); select(c.id); pushHistory(); };
-  propsEl.querySelector('#p-close').onclick = ()=>select(null);
+  propsEl.querySelector('#p-dup').onclick = ()=>{ const c = JSON.parse(JSON.stringify(o)); c.id = uid(); c.x += 1; c.y += 1; c.name += ' (copy)'; state.objects.push(c); rebuildObject(c); if (TYPES[c.type].hole) buildTerrainAndPlace(); select(c.id, true); pushHistory(); };
+  const closeProps = ()=>{ ui.propsOpen = false; renderProps(); setStatus(null); };
+  propsEl.querySelector('#p-close').onclick = closeProps; propsEl.querySelector('#p-x-close').onclick = closeProps;
 }
 function updateClearance(){ const o=getObj(ui.selected), el=document.getElementById('p-clear'); if (o && el) el.innerHTML = clearanceHTML(o);
   if (o){ const x=document.getElementById('p-x'), y=document.getElementById('p-y'); if (x && document.activeElement!==x) x.value=fmt(o.x); if (y && document.activeElement!==y) y.value=fmt(o.y); } }
@@ -1835,7 +1849,8 @@ canvas.addEventListener('pointerdown', e=>{
     const o = getObj(hit.id);
     if (ui.selected!==hit.id) select(hit.id);
     const base = levelAt(o.x,o.y)+(o.dz||0), gp = groundPoint(base);
-    if (gp){ drag = {o, dx:o.x-gp.x, dy:o.y-gp.z, base, moved:false}; controls.enabled=false; ocontrols.enabled=false; canvas.setPointerCapture(e.pointerId); }
+    if (gp){ drag = {o, dx:o.x-gp.x, dy:o.y-gp.z, base, moved:false}; controls.enabled=false; ocontrols.enabled=false; canvas.setPointerCapture(e.pointerId);
+      if (e.pointerType!=='mouse'){ clearTimeout(longPressT); longPressT = setTimeout(()=>{ if (drag && !drag.moved){ const id = drag.o.id; drag = null; down = null; setControlsForView(); openProps(id); } }, 550); } }   // long-press opens properties on touch
   }
 });
 canvas.addEventListener('pointermove', e=>{
@@ -1843,6 +1858,8 @@ canvas.addEventListener('pointermove', e=>{
   if (walk.on && walk.look){ walk.yaw = walk.look.yaw - (e.clientX-walk.look.x)*.005; walk.pitch = THREE.MathUtils.clamp(walk.look.pitch - (e.clientY-walk.look.y)*.004, -1.2, 1.2); return; }
   if (brush.on && ui.edit){ setNDC(e); const pt = brushPoint(); brushRing.visible = !!pt && !!brush.target; if (pt){ brushRing.position.set(pt.x, pt.y+.03, pt.z); brushRing.scale.setScalar(brushSpacing()/2); } if (brush.stroke){ if (pt) brushStamp(pt); return; } }
   if (!drag) return;
+  if (!drag.moved && down && Math.hypot(e.clientX-down.x, e.clientY-down.y) < 5) return;   // small dead zone so a click never nudges the object
+  clearTimeout(longPressT);
   setNDC(e); const gp = groundPoint(drag.base); if (!gp) return;
   let nx = gp.x+drag.dx, ny = gp.z+drag.dy;
   if (ui.layers.snap!==false){ nx = Math.round(nx*10)/10; ny = Math.round(ny*10)/10; }
@@ -1853,9 +1870,11 @@ canvas.addEventListener('pointermove', e=>{
 canvas.addEventListener('pointerup', e=>{
   if (walk.on){ walk.look=null; return; }
   if (brush.stroke){ const n = brush.stroke.n; brush.stroke = null; down = null; setControlsForView(); if (n){ pushHistory(); setStatus(`Placed ${n} × ${brush.target.name}. Keep painting, or Esc to stop the brush.`); } return; }
+  clearTimeout(longPressT);
   if (drag){ if (drag.moved){ placeMesh(drag.o); pushHistory(); } drag=null; setControlsForView(); return; }
   if (!down) return;
   const moved = Math.hypot(e.clientX-down.x, e.clientY-down.y) > 6; down=null;
+  if (!moved && e.button===2 && ui.edit && !ui.measuring){ setNDC(e); const h = pickObject(); if (h) openProps(h.id); else select(null); return; }
   if (moved || e.button!==0) return;
   setNDC(e);
   if (ui.measuring){ measureClick(); return; }
@@ -1863,8 +1882,13 @@ canvas.addEventListener('pointerup', e=>{
   if (!ui.edit){ if (catClick()) return; if (dogClick()) return; if (pileClick(hit)) return; if (hit){ showObjectInfo(getObj(hit.id)); return; } if (!showRoomInfo() ) throwBall(); return; }
   if (!hit){ select(null); showRoomInfo(); }
 });
+let longPressT = null;
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('dblclick', e=>{ if (!ui.edit || ui.measuring || brush.on) return; setNDC(e); const h = pickObject(); if (h) openProps(h.id); });
 addEventListener('keydown', e=>{
   if (e.target.matches('input,select,textarea')) return;
+  if (ui.edit && e.key==='Enter' && ui.selected){ openProps(ui.selected); return; }
+  if (ui.edit && e.key==='Escape' && ui.propsOpen){ ui.propsOpen = false; renderProps(); setStatus(null); return; }
   if (!ui.edit){ walk.keys[e.key.toLowerCase()] = true; if (e.key==='Escape' && walk.on) setView('aerial'); return; }
   if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'){ e.preventDefault(); document.getElementById(e.shiftKey?'redo':'undo').click(); return; }
   if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='y'){ e.preventDefault(); document.getElementById('redo').click(); return; }
@@ -1922,13 +1946,13 @@ const walk = {on:false, yaw:0, pitch:0, keys:{}, look:null, btn:0};
 function setControlsForView(){ controls.enabled = camera===persp && !walk.on; ocontrols.enabled = camera===ortho; }
 function setView(v){
   ui.view = v; walk.on = (v==='walk'); document.getElementById('walkpad').hidden = !walk.on;
-  document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed', b.dataset.view===v));
+  document.getElementById('viewSel').value = v;
   if (v==='plan'){ camera = ortho; ortho.position.set(-6,120,6); ocontrols.target.set(-6,0,6); ortho.zoom = 1; ortho.updateProjectionMatrix(); ocontrols.update(); }
   else if (v==='walk'){ camera = persp; walk.pos = V(-9, 0, 4.5); walk.yaw = 0; walk.pitch = 0.02; setStatus('Walk: W A S D or arrow keys to move, drag to look, Esc to leave'); }
   else { camera = persp; const c = VIEWS[v]; persp.position.set(...c.pos); controls.target.set(...c.tgt); controls.update(); setStatus(null); }
   resize(); setControlsForView(); if (typeof buildComposer==='function' && composerReady) buildComposer();
 }
-document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));
+{ const vs = document.getElementById('viewSel'); vs.onchange = ()=>{ setView(vs.value); vs.blur(); }; }
 document.getElementById('walkexit').onclick = ()=>setView('aerial');
 document.querySelectorAll('[data-walk]').forEach(b=>{ const k=b.dataset.walk==='f'?'w':'s';
   b.addEventListener('pointerdown',()=>walk.keys[k]=true); b.addEventListener('pointerup',()=>walk.keys[k]=false); b.addEventListener('pointerleave',()=>walk.keys[k]=false); });
@@ -1951,9 +1975,9 @@ function applyCut(){
   G.roof.visible = ui.cut==='all' && ui.layers.roof!==false;
   G.uf.visible = ui.cut!=='gf';
   G.pv.visible = ui.cut==='all' && ui.layers.pv===true;
-  document.querySelectorAll('[data-cut]').forEach(b=>b.setAttribute('aria-pressed', b.dataset.cut===ui.cut));
+  document.getElementById('cutSel').value = ui.cut;
 }
-document.querySelectorAll('[data-cut]').forEach(b=>b.onclick=()=>{ ui.cut=b.dataset.cut; applyCut(); });
+{ const cs = document.getElementById('cutSel'); cs.onchange = ()=>{ ui.cut = cs.value; applyCut(); cs.blur(); }; }
 const LAYERS = [
   ['proposed','Proposed projects',true],['existing','Existing garden elements',true],['trees','Trees & plants',true],
   ['roof','Roof',true],['furniture','Furniture (illustrative)',true],['rooms','Room labels',true],
@@ -2037,7 +2061,7 @@ function addItem(n, t, p){
   if (ui.layers.proposed===false){ ui.layers.proposed = true; renderLayers(); applyLayers(); }
   state.objects.push(o); rebuildObject(o); if (TYPES[t].hole) buildTerrainAndPlace(); select(o.id); pushHistory();
   focusOn(o);
-  setStatus(`Added ${n}. Drag it into place, or type its position in the panel.`);
+  setStatus(`Added ${n}. Drag it into place · right-click it for size, position and colours.`);
   if (innerWidth<=760) document.getElementById('panel').classList.add('collapsed');
 }
 /* brush: paint many plants or stones by clicking or dragging on the ground */
@@ -2087,7 +2111,7 @@ function renderPlantGrid(){
 function renderBuild(){
   const el = document.getElementById('tab-build');
   const formOpts = Object.entries(FORMS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
-  el.innerHTML = `<p>Pick an item to drop it in the middle of the view, then drag it into place. Q / E rotate, Delete removes.</p>
+  el.innerHTML = `<p>Pick an item to drop it in the middle of the view, then drag it into place. Click an object to select it, <b>right-click</b> it (long-press on touch, or double-click) for size, position and colours. Q / E rotate, Delete removes.</p>
     <div class="brushbar${brush.on?' on':''}">
       <label class="check"><input type="checkbox" id="br-on"${brush.on?' checked':''}> <b>Brush</b>: paint many at once</label>
       <div class="row"><span style="flex:1;font-size:12.5px;color:var(--muted)">Painting: <b id="br-target" style="color:var(--ink)">pick a plant or stone below</b></span></div>
@@ -2156,7 +2180,7 @@ let playing=false; document.getElementById('s-play').onclick=(e)=>{ playing=!pla
 document.querySelectorAll('[role=tab]').forEach(t=>t.onclick=()=>{ document.querySelectorAll('[role=tab]').forEach(x=>{ x.setAttribute('aria-selected', x===t); document.getElementById('tab-'+x.dataset.tab).hidden = x!==t; }); });
 document.getElementById('toggleTools').onclick=()=>document.getElementById('panel').classList.toggle('collapsed');
 if (innerWidth<=760) document.getElementById('panel').classList.add('collapsed');
-function setStatus(t){ document.getElementById('status').textContent = t || (ui.edit ? 'Edit mode · drag objects to move them · Q / E rotate · Delete removes' : 'View mode · drag to orbit · click the lawn to throw a ball for the dog · click anything for details'); }
+function setStatus(t){ document.getElementById('status').textContent = t || (ui.edit ? 'Edit mode · click to select, drag to move · right-click for properties · Q / E rotate · Delete removes' : 'View mode · drag to orbit · click the lawn to throw a ball for the dog · click anything for details'); }
 
 /* ---------- data tab ---------- */
 document.getElementById('tab-about').innerHTML = `

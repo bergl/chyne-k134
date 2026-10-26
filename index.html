@@ -36,6 +36,8 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 [hidden]{display:none!important}
 body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:14px;overflow:hidden;touch-action:manipulation;overscroll-behavior:none}
 #app{position:fixed;inset:0;}
+.ios-pwa,.ios-pwa body{height:var(--app-h,100%);overflow:hidden}
+.ios-pwa #app{bottom:auto;height:var(--app-h,100%)}
 #view{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
 button,select,input{font:inherit;color:inherit}
 button{cursor:pointer}
@@ -785,7 +787,19 @@ const DEFAULT_STATE = () => JSON.parse(JSON.stringify(DEFAULT_DESIGN));
 
 /* ================= RENDERER / SCENE ================= */
 const canvas = document.getElementById('view');
-const isSmall = Math.min(innerWidth, innerHeight) < 700;
+/* iOS home-screen apps with the translucent status bar report a window height that leaves the status bar out, so a
+   page sized to the window stops short of the bottom edge by that much. There the app is sized to the full screen,
+   but only when it fills the screen's width (not in iPad split view) and the gap is about a status bar tall. */
+const IOS_PWA = navigator.standalone === true;
+function appH(){
+  if (!IOS_PWA) return innerHeight;
+  const land = innerWidth > innerHeight, sw = land ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+  const sh = land ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height);
+  return Math.abs(innerWidth - sw) <= 2 && sh > innerHeight && sh - innerHeight <= 80 ? sh : innerHeight;
+}
+function syncAppH(){ if (IOS_PWA) document.documentElement.style.setProperty('--app-h', appH() + 'px'); }
+if (IOS_PWA){ document.documentElement.classList.add('ios-pwa'); syncAppH(); }
+const isSmall = Math.min(innerWidth, appH()) < 700;
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true, preserveDrawingBuffer:false});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
@@ -2724,7 +2738,7 @@ function setView(v){
   if (v==='plan'){ camera = ortho; ortho.position.set(-6,120,6); ocontrols.target.set(-6,0,6); ortho.zoom = 1; ortho.updateProjectionMatrix(); ocontrols.update(); }
   else if (v==='walk'){ camera = persp; walk.pos = V(-9, 0, 4.5); walk.yaw = 0; walk.pitch = 0.02; setStatus('Walk: W A S D or arrow keys to move, drag to look, Esc to leave'); }
   else { camera = persp; const c = VIEWS[v]; persp.position.set(...c.pos); controls.target.set(...c.tgt);
-    const asp = innerWidth/innerHeight;                    // portrait phones: step back so the whole plot fits across
+    const asp = innerWidth/appH();                         // portrait phones: step back so the whole plot fits across
     if (v==='aerial' && asp < 1.2) persp.position.sub(controls.target).multiplyScalar(Math.min(2.2, Math.pow(1.3/asp, .65))).add(controls.target);
     controls.update(); setStatus(null); }
   resize(); setControlsForView(); if (typeof buildComposer==='function' && composerReady) buildComposer();
@@ -2815,7 +2829,7 @@ function updateLabels(){
   if (dog.bubble && performance.now() < dog.bubbleUntil && dogGroup.visible) items.push({pos:dogGroup.position.clone().add(V(0,1.15,0)), text:dog.bubble, cls:'obj'});
   const sel = getObj(ui.selected);
   if (drag && sel){ items.push({pos:V(sel.x, levelAt(sel.x,sel.y)+2.2, sel.y), text:`x ${sel.x.toFixed(1)}  y ${sel.y.toFixed(1)}`, cls:'obj'}); }
-  const r = {width:innerWidth, height:innerHeight};   // the canvas fills the window; no layout read per frame
+  const r = {width:innerWidth, height:appH()};   // the canvas fills the window; no layout read per frame
   let i=0; const placed=[];
   items.sort((a,b)=>(a.cls?0:1)-(b.cls?0:1)); // measurements and dimensions win over room names
   for (const it of items){
@@ -3042,7 +3056,7 @@ function applyCam(cs){
   setView(VIEWS[cs.view]||cs.view==='plan' ? cs.view : 'aerial');
   const c = camera===ortho ? ocontrols : controls;
   camera.position.fromArray(cs.pos); c.target.fromArray(cs.tgt);
-  const asp = innerWidth/innerHeight;
+  const asp = innerWidth/appH();
   if (camera===persp && cs.view==='aerial' && asp < 1.2) persp.position.sub(c.target).multiplyScalar(Math.min(2.4, 1.3/asp)).add(c.target);   // views saved on a wide screen: keep the same width in view
   if (camera===ortho){ ortho.zoom = cs.zoom||1; ortho.updateProjectionMatrix(); }
   c.update(); if (cs.cut){ ui.cut = cs.cut; applyCut(); }
@@ -3347,7 +3361,7 @@ function buildComposer(){
   if (composer){ for (const p of composer.passes) p.dispose?.(); composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); composer = null; }
   const q = Q(); composerReady = true; aoPass = bloomPass = null;
   if (!q.ao && !q.bloom && !q.smaa) return;
-  const w = innerWidth, h = innerHeight;
+  const w = innerWidth, h = appH();
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
   if (q.ao){
@@ -4195,7 +4209,7 @@ function schedulePost(moving){
 
 /* ================= LOOP ================= */
 function resize(){
-  const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false);
+  syncAppH(); const w = innerWidth, h = appH(); renderer.setSize(w, h, false);
   persp.aspect = w/h; persp.updateProjectionMatrix();
   const s = 17; ortho.left=-s*w/h; ortho.right=s*w/h; ortho.top=s; ortho.bottom=-s; ortho.updateProjectionMatrix();
   composer?.setSize(w, h);

@@ -24,4 +24,6 @@ Interactive 3D model of house K-134 (Premonstrátů 1000, Chýně) and its garde
   - A quadtree is walked front to back each frame. It skips areas outside the view, and an occlusion horizon hides houses fully behind closer buildings. Houses near the plot cast shadows through invisible stand-ins, so shadows never depend on the camera.
   - Layers → Performance stats shows FPS, draw calls, and how many houses are drawn at each level or culled.
 
+**On phones:** the page has a proper mobile viewport, so it opens in the phone layout. It can be added to the home screen (Share → Add to Home Screen on iPhone, Install app on Android) and then runs full screen like an app.
+
 The app is a single static `index.html` and uses Three.js 0.160, three-mesh-bvh 0.7.6 and three-gpu-pathtracer 0.0.23 from jsDelivr. To run it locally, open the file in a browser or serve the folder with any static server.

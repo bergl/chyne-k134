@@ -1,3 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Interactive 3D model of house K-134 in Chýně and its garden, for planning a sauna, pool and planting.">
+<meta name="theme-color" content="#eef1ec" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141816" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="K-134 Garden">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Chýně K-134 Garden Studio</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
@@ -17,8 +32,9 @@
   --paper:#141a17; --panel:rgba(26,33,30,.94); --ink:#e3ebe5; --muted:#9aaba2; --line:#33423b;
   --accent:#6fbf93; --accent-ink:#0e1712; --proposed:#e39a62; --warn:#f08a6a; --chip:#25302b; color-scheme:dark}
 html,body{height:100%}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 [hidden]{display:none!important}
-body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:14px;overflow:hidden}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:14px;overflow:hidden;touch-action:manipulation;overscroll-behavior:none}
 #app{position:fixed;inset:0;}
 #view{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
 button,select,input{font:inherit;color:inherit}
@@ -422,7 +438,8 @@ table.facts td{border-bottom:1px solid var(--line)}
   *,*::before,*::after{animation:none !important; transition:none !important}
 }
 </style>
-
+</head>
+<body>
 <div id="app">
   <canvas id="view" aria-label="3D model of house K-134 and garden"></canvas>
   <div id="labels"></div>
@@ -3026,7 +3043,7 @@ function applyCam(cs){
   const c = camera===ortho ? ocontrols : controls;
   camera.position.fromArray(cs.pos); c.target.fromArray(cs.tgt);
   const asp = innerWidth/innerHeight;
-  if (camera===persp && cs.view==='aerial' && asp < 1.2) persp.position.sub(c.target).multiplyScalar(Math.min(2.2, Math.pow(1.3/asp, .65))).add(c.target);
+  if (camera===persp && cs.view==='aerial' && asp < 1.2) persp.position.sub(c.target).multiplyScalar(Math.min(2.4, 1.3/asp)).add(c.target);   // views saved on a wide screen: keep the same width in view
   if (camera===ortho){ ortho.zoom = cs.zoom||1; ortho.updateProjectionMatrix(); }
   c.update(); if (cs.cut){ ui.cut = cs.cut; applyCut(); }
 }
@@ -4216,3 +4233,5 @@ if (!ownSince) applyCam(DEFAULT_CAM);
 initDone = true;
 requestAnimationFrame(loop);
 </script>
+</body>
+</html>

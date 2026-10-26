@@ -1,0 +1,35 @@
+{
+ "name": "Chýně K-134 Garden Studio",
+ "short_name": "K-134 Garden",
+ "description": "Interactive 3D model of house K-134 in Chýně and its garden, for planning a sauna, pool and planting.",
+ "lang": "en",
+ "start_url": "./",
+ "scope": "./",
+ "display": "standalone",
+ "orientation": "any",
+ "background_color": "#eef1ec",
+ "theme_color": "#2b8a5c",
+ "icons": [
+  {
+   "src": "icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png"
+  },
+  {
+   "src": "icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png"
+  },
+  {
+   "src": "icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "maskable"
+  },
+  {
+   "src": "icon.svg",
+   "sizes": "any",
+   "type": "image/svg+xml"
+  }
+ ]
+}

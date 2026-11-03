@@ -17,12 +17,15 @@ Interactive 3D model of house K-134 (Premonstrátů 1000, Chýně) and its garde
 - **Plants:** procedural trees and grass that sway in a wind you can adjust.
 - **Walk inside:** the View selector lists every room. Pick one to stand in it, then drag to look around and walk with W A S D, the arrow keys or the on-screen buttons. Walls and furniture block the way, doorways let you through, and the stairs connect the floors.
 - **Swimmer:** swims laps, then relaxes: leaning back against the end wall with arms over the coping, or floating on an inflatable lounger that drifts in the pool. The pool's properties choose Swims, then relaxes (default), Just relaxes, or Swims laps.
-- **Furniture:** the living-room, kitchen and bedroom furniture from the sales plan are editable objects. These include the corner sofa, dining table with chairs, kitchen island and tall units, beds and desks.
+- **Furniture:** the living room and kitchen are furnished from the owners' photos (Nov 2026); the bedroom furniture comes from the sales plan. Every piece is an editable object.
   - Switch on Edit while standing in a room. Click a piece to select it, drag it to move it, Q / E rotates, right-click or long-press opens its properties, and Delete removes it.
-  - The living room has the BRW Milenium II corner sofa (258 × 214 cm, 81 cm high or 96 cm with raised headrests) facing the TV. Its properties switch the corner side (right P / left L), raise the headrests and resize both sides.
-  - The dining chairs face the table.
-  - Build → Indoors adds more right in front of you: the corner sofa, armchair, wardrobe, bookshelf, rug, floor lamp, house plant and more.
-  - The 65″ Samsung QE65S90C TV (1444.9 × 829.6 × 39.9 mm, no stand) hangs above the TV unit; dragged TVs snap flat onto the nearest wall.
+  - **Kitchen:** greige handleless units with black granite tops. The island carries the induction hob, the espresso machine, kettle, paper towels, mills and mugs; the oak range hood and a two-tier black hanging shelf (basil, peace lily, jars, tins) hang from the black ceiling with its LED strips. Along the wall: the black side-by-side fridge covered in magnets, a tall unit, the sink counter with a black backsplash under oak wall cabinets, and the oven column by the garden door.
+  - **Dining:** oak table on black steel frames, six cream upholstered chairs, grey placemats, roses, a linear pendant, dark grey curtains, the kumquat in a blue pot, and on the wall the fish print and the striped shell canvas.
+  - **Living room:** cream corner sofa with raised headrests and chrome legs facing the TV, reclaimed-wood coffee table on a cream rug, the chaise bench and floor lamp by the window, the wine fridge in the corner with the leaning olive-tree photo. The TV wall and the slat wall are painted greige; the oak slat panel carries three mesh pendants over the floating desk shelf and black drawers under a black bulkhead; the three-arm lamp hangs from the ceiling. The big blue boat painting hangs on a rope from a cleat next to the TV; below the TV a black floating shelf holds the soundbar, router and camera.
+  - Pictures, curtains, shelves, the thermostat and the air conditioner snap flat onto the nearest wall when dragged; a picture can also lean against the wall on the floor. Each piece's properties change its size, style and colours.
+  - Build → Indoors adds more right in front of you: sofa, armchair, pictures, curtains, hanging shelf, range hood, fridge, kitchen things, ceiling panels, wall colours and more.
+  - The 65″ Samsung QE65S90C TV (1444.9 × 829.6 × 39.9 mm, no stand) hangs on the wall; dragged TVs snap flat onto the nearest wall.
+  - Small fittings are drawn only when you are inside or the house is cut open, so the garden views stay fast.
 - **Photo mode:** progressive accumulation of jittered frames (anti-aliasing and soft sun shadows); experimental path tracing with three-gpu-pathtracer.
 - **Performance:**
   - Parts that share a material are merged into one mesh. The dog, cat, swimmer and lady are rigidly skinned, so each takes only a few draw calls.

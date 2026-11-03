@@ -16,6 +16,7 @@ Interactive 3D model of house K-134 (Premonstrátů 1000, Chýně) and its garde
 - **Glass and water:** windows and water reflect the garden live; Ultra adds true refraction.
 - **Plants:** procedural trees and grass that sway in a wind you can adjust.
 - **Walk inside:** the View selector lists every room. Pick one to stand in it, then drag to look around and walk with W A S D, the arrow keys or the on-screen buttons. Walls and furniture block the way, doorways let you through, and the stairs connect the floors.
+- **Swimmer:** swims laps, then relaxes: leaning back against the end wall with arms over the coping, or floating on an inflatable lounger that drifts in the pool. The pool's properties choose Swims, then relaxes (default), Just relaxes, or Swims laps.
 - **Furniture:** the living-room, kitchen and bedroom furniture from the sales plan are editable objects. These include the sofa, dining table with chairs, kitchen island and tall units, beds and desks.
   - Switch on Edit while standing in a room. Click a piece to select it, drag it to move it, Q / E rotates, right-click or long-press opens its properties, and Delete removes it.
   - Build → Indoors adds more right in front of you: armchair, wardrobe, bookshelf, rug, floor lamp, house plant and more.

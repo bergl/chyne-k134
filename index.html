@@ -702,7 +702,7 @@ const TYPES = {
   sauna_barrel:{f:[['w','Length',1.5,6,.1],['d','Diameter',1.5,3,.1]],hole:false},
   sauna_cube:{f:[['w','Length (glass side)',2,6,.1],['d','Depth',1.6,4,.1],['h','Height',2.2,3.2,.05],['step','Entrance step',0,1.5,.05]]},
   sauna_cabin:{f:[['w','Width',1.5,6,.1],['d','Depth',1.5,5,.1],['h','Height',2,3.5,.05],['porch','Porch depth',0,2.5,.1]]},
-  pool:{f:[['w','Length',1.5,15,.1],['d','Width',1,8,.1],['depth','Water depth',.3,2,.05]],hole:true},
+  pool:{f:[['w','Length',1.5,15,.1],['d','Width',1,8,.1],['depth','Water depth',.3,2,.05],['swimmer','Swimmer',{mix:'Swims, then relaxes', chill:'Just relaxes', laps:'Swims laps'}]],hole:true},
   pool_round:{f:[['w','Diameter',2,8,.1],['h','Wall height',.6,1.5,.05]]},
   hottub:{f:[['w','Width',1.5,3,.05],['d','Depth',1.5,3,.05],['h','Height',.7,1.1,.05]]},
   pond:{f:[['w','Length',1,15,.1],['d','Width',.8,10,.1],['depth','Depth',.2,1.5,.05]],hole:true},
@@ -4234,34 +4234,101 @@ const SW = {};
   swimmer.traverse(m=>{ if (m.isMesh && m.material!==foam && !SW.splash.includes(m)) { m.castShadow = true; m.receiveShadow = true; } });
   mergeMeshes(swimmer, SW);
 })();
-const swim = {u:-1, dir:1, turn:0, phase:0, poolId:null};
+// inflatable lounger that drifts in the pool, for the swimmer to relax on
+const poolFloat = new THREE.Group(); scene.add(poolFloat); poolFloat.visible = false;
+{ const t = (c)=>new THREE.MeshStandardMaterial({color:c, roughness:.35, metalness:0});
+  const cols = [t(0xf4f7f8), t(0x35b7c4)];
+  for (let i=0;i<6;i++){ const m = new THREE.Mesh(new THREE.CapsuleGeometry(.062, 1.42, 4, 14), cols[i%2]); m.rotation.z = Math.PI/2; m.position.set(-.08, .06, -.31+i*.124); poolFloat.add(m); }
+  const pil = new THREE.Mesh(new THREE.CapsuleGeometry(.085, .56, 4, 14), cols[1]); pil.rotation.x = Math.PI/2; pil.position.set(.78, .1, 0); poolFloat.add(pil);
+  poolFloat.traverse(m=>{ if (m.isMesh){ m.castShadow = m.receiveShadow = true; } }); mergeMeshes(poolFloat); }
+/* the swimmer laps the pool, then relaxes: leaning back against the end wall with the arms over the coping,
+   then floating on the lounger; the pool's Swimmer setting picks laps, relaxing or both. Each pose is a set of
+   joint angles; switching between them blends over a second or two. Positions are in the pool's own frame. */
+const swim = {mode:'laps', t:0, next:30, u:-1, dir:1, turn:0, phase:0, poolId:null, end:1, from:null, bt:1, bdur:1, goal:null, after:null, cur:null,
+  f:{x:0, z:-.3, yaw:0, vx:.05, vz:.02, vyaw:.03}};
+const SWP = {} ;   // scratch
+function swPoseApply(P, pool, base){
+  const r = (pool.rot||0)*Math.PI/180, c = Math.cos(r), s2 = Math.sin(r);
+  swimmer.position.set(pool.x + P.x*c + P.z*s2, base + P.y, pool.y - P.x*s2 + P.z*c); swimmer.rotation.y = r + P.yaw;
+  SW.body.rotation.set(P.b[0], P.b[1], P.b[2]); SW.body.position.y = P.by;
+  SW.head.rotation.set(P.h[0], P.h[1], P.h[2]);
+  SW.arms.forEach((A,i)=>{ const q = P.a[i]; A.sh.rotation.set(q[0], q[1], q[2]); A.elbow.rotation.set(0, q[3], q[4]); });
+  SW.legs.forEach((L,i)=>{ const q = P.l[i]; L.hip.rotation.set(0, q[0], q[1]); L.knee.rotation.z = q[2]; });
+}
+const swLerp = (a, b, k)=>a + (b-a)*k;
+function swAngLerp(a, b, k){ let d = b - a; while (d > Math.PI) d -= 2*Math.PI; while (d < -Math.PI) d += 2*Math.PI; return a + d*k; }
+function swMix(A, B, k){ const L = (x, y)=>x.map((v,i)=>Array.isArray(v) ? L(v, y[i]) : swLerp(v, y[i], k));
+  return {x:swLerp(A.x,B.x,k), z:swLerp(A.z,B.z,k), y:swLerp(A.y,B.y,k), yaw:swAngLerp(A.yaw,B.yaw,k), by:swLerp(A.by,B.by,k), b:L(A.b,B.b), h:L(A.h,B.h), a:L(A.a,B.a), l:L(A.l,B.l)}; }
+function swCrawl(x, z, yaw, ph, now, slow=1){ // front crawl: arms windmill half a cycle apart, flutter kick, roll toward the breathing side
+  const a = [0,1].map(i=>{ const side = SW.arms[i].side, an = (ph + (side>0 ? 0 : Math.PI)) % (2*Math.PI), recov = Math.sin(an) < 0; return [recov ? side*.5 : 0, 0, -an, 0, recov ? .9 : .25]; });
+  const l = [0,1].map(i=>{ const k = now/1000*9*slow + (SW.legs[i].side>0 ? 0 : Math.PI); return [0, Math.sin(k)*.28, -.15 - Math.max(0, Math.sin(k))*.25]; });
+  const breathe = Math.sin(ph/3) > .75;
+  return {x, z, y:-.2, yaw, by:Math.sin(ph*2)*.012, b:[Math.sin(ph)*.32, 0, 0], h:[breathe ? 1.0 : Math.sin(ph)*.15, 0, .12], a, l};
+}
+function swLean(pool, now){ // back to the end wall, facing the pool, arms spread over the coping
+  const t = now/1000, e = swim.end, look = Math.sin(t*.23)*.45 + Math.sin(t*.07)*.2;
+  return {x:e*(pool.p.w/2 - .27), z:0, y:-.36 + Math.sin(t*.9)*.008, yaw:e > 0 ? Math.PI : 0, by:0, b:[0, 0, 1.95], h:[look*.15, look, -.25],
+    a:SW.arms.map(A=>[0, -1.08*A.side, .45, .2*A.side, .8]),
+    l:[0,1].map(i=>{ const k = t*1.1 + i*2.1; return [(SW.legs[i].side)*.12, .55 + Math.sin(k)*.12, -.35 - Math.max(0, Math.sin(k+1))*.2]; })};
+}
+function swFloat(now){ // lying back on the lounger, hands behind the head, one knee up
+  const t = now/1000, F = swim.f;
+  return {x:F.x + Math.cos(F.yaw)*.22, z:F.z - Math.sin(F.yaw)*.22, y:.14 + Math.sin(t*1.3)*.012, yaw:F.yaw, by:0, b:[Math.PI, 0, -.06], h:[0, Math.sin(t*.17)*.25, .25],
+    a:[0,1].map(i=>{ const sd = SW.arms[i].side; return [0, -.35*sd, .35, 0, 2.55]; }),
+    l:[0,1].map(i=>{ const sd = SW.legs[i].side; return sd > 0 ? [.08*sd, 0, 0] : [.12*sd, .5 + Math.sin(t*.4)*.05, -.95]; })};
+}
+function swGo(mode, ms){ swim.from = swim.cur; swim.bt = 0; swim.bdur = ms; swim.mode = mode; swim.t = 0; }
 function updateSwimmer(dt, now){
   const pool = ui.layers.swimmer===false ? null : state.objects.find(o=>o.type==='pool' && visibleObj(o) && o.p.w>=2.5 && o.p.d>=1.2);
-  swimmer.visible = !!pool; if (!pool) return;
-  if (swim.poolId !== pool.id){ swim.poolId = pool.id; swim.u = -1; swim.dir = 1; swim.turn = 0; }
-  const half = Math.max(.05, pool.p.w/2 - 1.15), speed = .75;
-  if (swim.turn > 0){ swim.turn = Math.max(0, swim.turn - dt/1.1); if (swim.turn === 0) swim.dir *= -1; }
-  else { swim.u += swim.dir*speed*dt/half; if (Math.abs(swim.u) >= 1){ swim.u = Math.sign(swim.u); swim.turn = 1; } }
-  // place in the pool's frame: laps along its length, slightly off the centre line
-  const r = (pool.rot||0)*Math.PI/180, c = Math.cos(r), s2 = Math.sin(r), lx = swim.u*half, lz = pool.p.d*.12;
-  const base = levelAt(pool.x, pool.y) + (pool.dz||0);
-  swimmer.position.set(pool.x + lx*c + lz*s2, base - .2, pool.y - lx*s2 + lz*c);
-  const turning = swim.turn > 0, yawLocal = swim.dir > 0 ? 0 : Math.PI, spin = turning ? (1-swim.turn)*Math.PI : 0;
-  swimmer.rotation.y = r + yawLocal + spin;
-  // stroke: arms windmill half a cycle apart, flutter kick, roll toward the breathing side
-  swim.phase += dt * (turning ? 2.2 : 3.4);
-  const ph = swim.phase;
-  for (const A of SW.arms){ const a = ph + (A.side>0 ? 0 : Math.PI);
-    A.sh.rotation.z = -a;                                        // forward → down (pull) → back → up (recovery)
-    const recov = Math.sin(a) < 0; A.elbow.rotation.z = recov ? .9 : .25; A.sh.rotation.x = recov ? A.side*.5 : 0; }
-  for (const L of SW.legs){ L.hip.rotation.z = Math.sin(now/1000*9 + (L.side>0?0:Math.PI))*.28; L.knee.rotation.z = -.15 - Math.max(0, Math.sin(now/1000*9 + (L.side>0?0:Math.PI)))*.25; }
-  const breathe = Math.sin(ph/3) > .75;
-  SW.body.rotation.x = Math.sin(ph)*.32;
-  SW.head.rotation.x = breathe ? 1.0 : Math.sin(ph)*.15; SW.head.rotation.z = .12;
-  SW.body.position.y = Math.sin(ph*2)*.012;
-  SW.wake.material.opacity = turning ? .2 : .5;
+  swimmer.visible = !!pool; const pref = pool?.p.swimmer || 'mix', canFloat = pool && pool.p.w >= 3 && pool.p.d >= 1.6;
+  poolFloat.visible = !!pool && pref!=='laps' && canFloat;
+  if (!pool) return;
+  const base = levelAt(pool.x, pool.y) + (pool.dz||0), W = pool.p.w, D = pool.p.d, F = swim.f;
+  if (swim.poolId !== pool.id){ swim.poolId = pool.id; swim.mode = pref==='chill' ? 'lean' : 'laps'; swim.u = -1; swim.dir = 1; swim.turn = 0; swim.t = 0; swim.next = 25+Math.random()*15; swim.from = null; F.x = 0; F.z = -D/2+.45; }
+  // the lounger drifts slowly, kept clear of the swimming lane
+  if (poolFloat.visible){ const fx = W/2 - .95, z0 = -D/2 + .38, z1 = Math.max(z0, swim.mode==='float' ? D/2 - .38 : -.05);
+    F.vx += (Math.random()-.5)*.02*dt; F.vz += (Math.random()-.5)*.02*dt; F.vyaw += (Math.random()-.5)*.03*dt;
+    F.vx = THREE.MathUtils.clamp(F.vx, -.06, .06); F.vz = THREE.MathUtils.clamp(F.vz, -.04, .04); F.vyaw = THREE.MathUtils.clamp(F.vyaw, -.04, .04);
+    F.x += F.vx*dt; F.z += F.vz*dt; F.yaw += F.vyaw*dt;
+    if (Math.abs(F.x) > fx){ F.x = Math.sign(F.x)*fx; F.vx *= -.6; }
+    if (F.z < z0){ F.z = z0; F.vz = Math.abs(F.vz)*.6; } else if (F.z > z1) F.vz = Math.min(F.vz, -.03);      // drifts back out of the lane rather than jumping
+    if (Math.abs(F.yaw) > .35){ F.yaw = Math.sign(F.yaw)*.35; F.vyaw *= -.5; }
+    const r = (pool.rot||0)*Math.PI/180, c = Math.cos(r), s2 = Math.sin(r);
+    poolFloat.position.set(pool.x + F.x*c + F.z*s2, base - .15 + Math.sin(now/1000*1.3)*.012, pool.y - F.x*s2 + F.z*c); poolFloat.rotation.y = r + F.yaw; }
+  swim.t += dt;
+  const half = Math.max(.05, W/2 - 1.15), lane = D*.12;
+  let P;
+  if (swim.mode==='laps'){
+    if (pref!=='laps' && (pref==='chill' || swim.t > swim.next) && swim.turn > 0 && swim.turn < .9){ swim.end = Math.sign(swim.u); swGo('lean', 2.2); }   // finish the lap at the wall, then relax
+    if (swim.turn > 0){ swim.turn = Math.max(0, swim.turn - dt/1.1); if (swim.turn === 0) swim.dir *= -1; }
+    else { swim.u += swim.dir*.75*dt/half; if (Math.abs(swim.u) >= 1){ swim.u = Math.sign(swim.u); swim.turn = 1; } }
+    const turning = swim.turn > 0; swim.phase += dt*(turning ? 2.2 : 3.4);
+    P = swCrawl(swim.u*half, lane, (swim.dir > 0 ? 0 : Math.PI) + (turning ? (1-swim.turn)*Math.PI : 0), swim.phase, now);
+  } else if (swim.mode==='go'){ // swim across to a spot, then carry on with the next activity
+    const g = swim.goal(), dx = g.x - swim.cur.x, dz = g.z - swim.cur.z, d = Math.hypot(dx, dz), st = Math.min(d, .55*dt);
+    swim.phase += dt*2.6;
+    P = swCrawl(swim.cur.x + (d > 1e-3 ? dx/d*st : 0), swim.cur.z + (d > 1e-3 ? dz/d*st : 0), Math.atan2(-dz, dx), swim.phase, now, .7);
+    if (d < .35){ const a = swim.after; swim.after = null; a(); }
+  } else if (swim.mode==='lean'){
+    P = swLean(pool, now);
+    if (swim.t > (swim.leanFor ||= 30 + Math.random()*25)){ swim.leanFor = 0;
+      if (canFloat && pref!=='laps'){ swGo('go', 1.4); swim.goal = ()=>({x:F.x + .2, z:F.z}); swim.after = ()=>swGo('float', 1.8); }
+      else if (pref==='mix'){ swGo('laps', 1.6); swim.u = swim.end; swim.dir = -swim.end; swim.turn = 0; swim.next = 30+Math.random()*20; }
+      else { swim.end *= -1; swGo('go', 1.4); swim.goal = ()=>({x:swim.end*(W/2 - .5), z:0}); swim.after = ()=>swGo('lean', 2); } }
+  } else if (swim.mode==='float'){
+    P = swFloat(now);
+    if (swim.t > (swim.floatFor ||= 40 + Math.random()*30)){ swim.floatFor = 0;
+      if (pref==='mix'){ swGo('go', 1.8); swim.goal = ()=>({x:-half, z:lane}); swim.after = ()=>{ swGo('laps', 1.4); swim.u = -1; swim.dir = 1; swim.turn = 0; swim.next = 30+Math.random()*20; }; }
+      else { swim.end = Math.random() < .5 ? 1 : -1; swGo('go', 1.8); swim.goal = ()=>({x:swim.end*(W/2 - .5), z:0}); swim.after = ()=>swGo('lean', 2.2); } }
+  }
+  if (pref==='laps' && swim.mode!=='laps' && swim.mode!=='go'){ swGo('go', 1.5); swim.goal = ()=>({x:-half, z:lane}); swim.after = ()=>{ swGo('laps', 1.2); swim.u = -1; swim.dir = 1; swim.turn = 0; }; }
+  if (swim.from && swim.bt < 1){ swim.bt = Math.min(1, swim.bt + dt/swim.bdur); const k = swim.bt*swim.bt*(3 - 2*swim.bt); P = swMix(swim.from, P, k); }
+  swim.cur = P; swPoseApply(P, pool, base);
+  // white water only while swimming
+  const sw = swim.mode==='laps' || swim.mode==='go', ph = swim.phase;
+  SW.wake.material.opacity = sw ? (swim.turn > 0 ? .2 : .5) : 0;
   for (const [i,m] of SW.splash.entries()){ const a = ph + (i ? Math.PI : 0), entry = ((a % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI);
-    const k = entry < .9 ? 1 - entry/.9 : 0; m.position.set(.7, .06, i ? -.2 : .2); m.scale.setScalar(.5 + (1-k)*1.2); m.material.opacity = k*.75; }
+    const k = sw && entry < .9 ? 1 - entry/.9 : 0; m.position.set(.7, .06, i ? -.2 : .2); m.scale.setScalar(.5 + (1-k)*1.2); m.material.opacity = k*.75; }
 }
 
 /* ================= SNOW MODE: falling flakes, settling snow cover, a snowman ================= */

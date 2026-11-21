@@ -1,0 +1,15 @@
+import { chromium } from 'playwright-core';
+const b = await chromium.launch({executablePath:'/opt/pw-browsers/chromium', args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+const p = await (await b.newContext({viewport:{width:480,height:300}})).newPage();
+p.on('pageerror',e=>console.log('PAGEERR '+e.stack)); p.on('console',m=>{ if (m.type()==='warning' || m.type()==='error') console.log('CONSOLE', m.text().slice(0,300)); });
+await p.goto('http://localhost:8765/test.html', {timeout:240000, waitUntil:'domcontentloaded'});
+await p.waitForFunction(()=>window.__T && window.__T.frames >= 3, null, {timeout:300000});
+await p.evaluate(()=>{ window.__freezeT = 1e6; document.querySelector('[data-q=standard]').click(); }); await p.selectOption('#seasonSel','summer'); await p.waitForTimeout(2500);
+await p.evaluate(()=>{ const gl = __d.renderer.getContext(), orig = gl.blitFramebuffer.bind(gl); window.__blit = {n:0, err:{}, masks:{}};
+  gl.blitFramebuffer = (...a)=>{ while (gl.getError()); orig(...a); const e = gl.getError(); window.__blit.n++; if (e) window.__blit.err[e] = (window.__blit.err[e]||0)+1;
+    const rf = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING), df = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING);
+    const info = (target)=>{ const t = gl.getFramebufferAttachmentParameter(target, gl.DEPTH_ATTACHMENT, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE); return t === gl.RENDERBUFFER ? 'rb' : t === gl.TEXTURE ? 'tex' : 'none'; };
+    const k = `read:${info(gl.READ_FRAMEBUFFER)} draw:${info(gl.DRAW_FRAMEBUFFER)} depthMask:${gl.getParameter(gl.DEPTH_WRITEMASK)} scissor:${gl.isEnabled(gl.SCISSOR_TEST)} same:${rf===df}`; window.__blit.masks[k] = (window.__blit.masks[k]||0)+1; }; });
+await p.evaluate(()=>new Promise(r=>{ let k=0; const f=()=>{ if (++k>=40) r(); else requestAnimationFrame(f); }; requestAnimationFrame(f); }));
+console.log(JSON.stringify(await p.evaluate(()=>window.__blit)));
+await b.close();

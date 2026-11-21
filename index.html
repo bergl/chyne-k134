@@ -921,9 +921,7 @@ function appH(){
 function syncAppH(){ if (IOS_PWA) document.documentElement.style.setProperty('--app-h', appH() + 'px'); }
 if (IOS_PWA){ document.documentElement.classList.add('ios-pwa'); syncAppH(); }
 const isSmall = Math.min(innerWidth, appH()) < 700;
-// an opaque drawing buffer (nothing shows through the view, and the browser composites it more cheaply); the faster graphics card where there are two
-const glContext = canvas.getContext('webgl2', {alpha:false, depth:true, stencil:false, antialias:true, premultipliedAlpha:true, preserveDrawingBuffer:false, powerPreference:'high-performance'});
-const renderer = new THREE.WebGLRenderer(glContext ? {canvas, context:glContext} : {canvas, antialias:true, preserveDrawingBuffer:false});
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, preserveDrawingBuffer:false, powerPreference:'high-performance'});   // the faster graphics card where a computer has two
 renderer.debug.checkShaderErrors = /[?&#]debug\b/.test(location.href);   // the checks block on every new shader program: off unless asked for
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
@@ -4363,7 +4361,7 @@ function accumStep(){
     const r = Math.sqrt(Math.random()) * Math.tan(.0065), a = Math.random()*Math.PI*2; // sun disc ≈ 0.75°, a touch wider than the real 0.53° to hide shadow-map texels
     sun.position.copy(P.base).addScaledVector(P.su, Math.cos(a)*r*P.dist).addScaledVector(P.sv, Math.sin(a)*r*P.dist);
     renderer.shadowMap.needsUpdate = true;
-    if (composer) composer.render(); else renderer.render(scene, persp);
+    if (composer) renderComposer(); else renderer.render(scene, persp);
     renderer.setRenderTarget(null); renderer.copyFramebufferToTexture(new THREE.Vector2(0,0), P.frame);
     const u = accumQuad.material.uniforms; u.tPrev.value = P.rt[P.i].texture; u.tNew.value = P.frame; u.w.value = 1/(P.n+1);
     renderer.setRenderTarget(P.rt[1-P.i]); accumQuad.render(renderer); renderer.setRenderTarget(null);
@@ -5156,8 +5154,11 @@ function updateFall(dt, now){
 
 function renderFrame(){
   if (photo){ if (photo.kind==='pt') photo.pt.renderSample(); else accumStep(); return; }
-  if (composer){ windU.uAoOn.value = (aoPass && aoPass.enabled && aoPass.mixMaterial) ? 1 : 0; composer.render(); windU.uAoOn.value = 0; }   // the occlusion share travels in the alpha channel only when the pass that reads it runs
-  else renderer.render(scene, camera);
+  if (composer) renderComposer(); else renderer.render(scene, camera);
+}
+function renderComposer(){ // leaves and grass put their share of ambient occlusion into the alpha channel only while the pass that reads it runs; everywhere else alpha stays 1
+  windU.uAoOn.value = (aoPass && aoPass.enabled && aoPass.mixMaterial) ? 1 : 0;
+  try { composer.render(); } finally { windU.uAoOn.value = 0; }
 }
 
 /* ---------- frame budget ----------

@@ -4223,10 +4223,11 @@ function buildGrass(){
 
 /* post-processing: ambient occlusion, bloom, anti-aliasing */
 const AO_DEPTH = !/[?&#]ao=geo\b/.test(location.href);
+let frameNo = 0;   // counts drawn frames
 let composer = null, composerReady = false, aoPass = null, bloomPass = null, renderPass = null, smaaPass = null, postReady = true, postGen = 0, started = false;
 function syncComposerCamera(){ if (renderPass) renderPass.camera = camera; if (aoPass) aoPass.camera = camera; }   // the passes follow the active camera
 function buildComposer(){
-  if (composer){ for (const p of composer.passes){ p.dispose?.(); p.mixMaterial?.dispose(); p.nrmMaterial?.dispose(); } composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); composer = null; }
+  if (composer){ for (const p of composer.passes){ p.dispose?.(); p.mixMaterial?.dispose(); p.nrmMaterial?.dispose(); p.accMaterial?.dispose(); if (p.temporal){ for (const t of [...p.temporal.hist, ...p.temporal.noise]) t.dispose(); } } composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); composer = null; }
   const q = Q(); composerReady = true; aoPass = bloomPass = renderPass = smaaPass = null; postGen++; postReady = true;
   if (!q.ao && !q.bloom && !q.smaa) return;
   const w = innerWidth, h = appH();
@@ -4235,7 +4236,7 @@ function buildComposer(){
   if (q.ao){
     const ao = new GTAOPass(scene, camera, w, h); ao.blendIntensity = .9; aoPass = ao;
     ao.updateGtaoMaterial({radius:.45, distanceExponent:1.4, thickness:1.2, scale:1, samples:12, distanceFallOff:1, screenSpaceRadius:false});
-    const aoSize = ao.setSize.bind(ao); ao.setSize = (w2, h2)=>aoSize(Math.max(1, Math.round(w2/2)), Math.max(1, Math.round(h2/2)));   // AO is soft: half resolution is plenty
+    const aoSize = ao.setSize.bind(ao); ao.setSize = (w2, h2)=>{ const hw = Math.max(1, Math.round(w2/2)), hh = Math.max(1, Math.round(h2/2)); aoSize(hw, hh); if (ao.temporal){ for (const h of ao.temporal.hist) h.setSize(hw, hh); ao.temporal.still = 0; } };   // AO is soft: half resolution is plenty
     const base = ao.render.bind(ao);
     if (AO_DEPTH){ // the occlusion is worked out from the depth of the picture just drawn (surface directions are rebuilt from it): no second drawing of the scene
       ao._renderGBuffer = false;
@@ -4260,17 +4261,50 @@ function buildComposer(){
         uniforms:{tDiffuse:{value:null}, tAO:{value:null}, tDepth:{value:null}, intensity:{value:1}, cameraNear:{value:.2}, cameraFar:{value:4000}, persp:{value:1}},
         fragmentShader:`uniform sampler2D tDiffuse; uniform sampler2D tAO; uniform highp sampler2D tDepth; uniform float intensity; uniform float cameraNear; uniform float cameraFar; uniform float persp; varying vec2 vUv;
           #include <packing>
+          float viewZ(float d){ return persp > 0.5 ? -perspectiveDepthToViewZ(d, cameraNear, cameraFar) : -orthographicDepthToViewZ(d, cameraNear, cameraFar); }
           void main(){ vec4 c = texture2D(tDiffuse, vUv);
-            float dist = persp > 0.5 ? -perspectiveDepthToViewZ(texture2D(tDepth, vUv).x, cameraNear, cameraFar) : 0.0;   // far away the occlusion is smaller than a pixel: it fades out there
-            gl_FragColor = vec4(c.rgb * mix(1.0, texture2D(tAO, vUv).r, intensity * c.a * (1.0 - smoothstep(70.0, 150.0, dist))), 1.0); }` });
+            float z0 = viewZ(texture2D(tDepth, vUv).x);
+            // the occlusion is worked out at half resolution; each pixel takes it from those of the four nearest samples that lie on its own surface, so it does not smear across the outlines of things
+            vec2 aoSize = vec2(textureSize(tAO, 0)), px = 1.0 / aoSize, st = vUv * aoSize - 0.5, f = fract(st), base = (floor(st) + 0.5) * px;
+            float tol = 0.02 * z0 + 0.02, sum = 0.0, wsum = 0.0;
+            for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++){
+              vec4 t = texture2D(tAO, base + vec2(float(i), float(j)) * px);   // (occlusion, distance) of that sample
+              float dz = (t.g - z0) / tol, w = ((i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y) + 0.02) / (1.0 + dz * dz * dz * dz);
+              sum += t.r * w; wsum += w; }
+            float dist = persp > 0.5 ? z0 : 0.0;   // far away the occlusion is smaller than a pixel: it fades out there
+            gl_FragColor = vec4(c.rgb * mix(1.0, sum / wsum, intensity * c.a * (1.0 - smoothstep(70.0, 150.0, dist))), 1.0); }` });
+      // while the camera rests, the occlusion of successive frames is averaged, each frame sampling in different directions: the grain of a single frame smooths out
+      // (the 25 sampling directions are dealt to different pixels every frame; a moving camera uses the newest frame alone)
+      const mkHist = ()=>new THREE.WebGLRenderTarget(1, 1, {type:THREE.HalfFloatType, depthBuffer:false, minFilter:THREE.NearestFilter, magFilter:THREE.NearestFilter});
+      const T = ao.temporal = {on:true, still:0, k:0, i:0, f:-9, last:new Float64Array(32), noise:[], hist:[mkHist(), mkHist()]};   // hist: (occlusion, distance) of the frames so far, two targets taking turns
+      { const src = ao.gtaoNoiseTexture.image.data, n = ao.gtaoNoiseTexture.image.width;
+        for (let k = 0; k < n*n; k++){ const data = new Uint8Array(src.length), sx = (k*2) % n, sy = (k*3 + Math.floor(k/n)) % n;
+          for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) for (let c = 0; c < 4; c++) data[(y*n + x)*4 + c] = src[(((y + sy) % n)*n + (x + sx) % n)*4 + c];
+          const tx = new THREE.DataTexture(data, n, n); tx.wrapS = tx.wrapT = THREE.RepeatWrapping; tx.needsUpdate = true; T.noise.push(tx); } }
+      const acc = ao.accMaterial = new THREE.ShaderMaterial({ depthTest:false, depthWrite:false, blending:THREE.NoBlending, vertexShader:fsVert,
+        uniforms:{tNew:{value:null}, tOld:{value:null}, tDepth:{value:null}, fresh:{value:1}, cameraNear:{value:.2}, cameraFar:{value:4000}, persp:{value:1}},
+        fragmentShader:`uniform sampler2D tNew; uniform sampler2D tOld; uniform highp sampler2D tDepth; uniform float fresh; uniform float cameraNear; uniform float cameraFar; uniform float persp; varying vec2 vUv;
+          #include <packing>
+          void main(){ float d = texture2D(tDepth, vUv).x, z = persp > 0.5 ? -perspectiveDepthToViewZ(d, cameraNear, cameraFar) : -orthographicDepthToViewZ(d, cameraNear, cameraFar);
+            vec4 o = texture2D(tOld, vUv);                          // (occlusion so far, distance, frames averaged)
+            // each pixel counts its own frames; it starts over when the camera has moved or something else is at this pixel now (an animal, a leaf)
+            float n = (fresh > 0.5 || abs(o.g - z) > 0.01 * z + 0.01) ? 0.0 : min(o.b + 1.0, 12.0);
+            gl_FragColor = vec4(mix(o.r, texture2D(tNew, vUv).r, 1.0 / (n + 1.0)), z, n, 1.0); }` });
       ao.render = (r, writeBuffer, readBuffer)=>{ const cam = ao.camera, d = readBuffer.depthTexture, G = ao.gtaoMaterial.uniforms, D = ao.pdMaterial.uniforms;
         nrm.uniforms.tDepth.value = d; nrm.uniforms.cameraProjectionMatrixInverse.value.copy(cam.projectionMatrixInverse); ao.renderPass(r, nrm, ao.normalRenderTarget);
         G.tDepth.value = d; D.tDepth.value = d; G.cameraNear.value = cam.near; G.cameraFar.value = cam.far;
         G.cameraProjectionMatrix.value.copy(cam.projectionMatrix); G.cameraProjectionMatrixInverse.value.copy(cam.projectionMatrixInverse); G.cameraWorldMatrix.value.copy(cam.matrixWorld);
+        { const E = cam.matrixWorld.elements, Pm = cam.projectionMatrix.elements, L = T.last; let moved = false;
+          for (let i = 0; i < 16; i++){ if (Math.abs(E[i] - L[i]) > 1e-6 || Math.abs(Pm[i] - L[16+i]) > 1e-6) moved = true; L[i] = E[i]; L[16+i] = Pm[i]; }
+          T.still = (!T.on || moved || frameNo - T.f > 1) ? 0 : T.still + 1; T.f = frameNo;   // only frames drawn one after another are averaged
+          T.k = (T.still || (photo && T.on)) ? (T.k + 1) % T.noise.length : 0;                // photo mode averages its own frames: it only needs the directions to vary
+          G.tNoise.value = T.noise[T.k]; }
         ao.renderPass(r, ao.gtaoMaterial, ao.gtaoRenderTarget, 0xffffff, 1.0);
         D.cameraProjectionMatrixInverse.value.copy(cam.projectionMatrixInverse);
         ao.renderPass(r, ao.pdMaterial, ao.pdRenderTarget, 0xffffff, 1.0);
-        const U = mix.uniforms; U.tDiffuse.value = readBuffer.texture; U.tAO.value = ao.pdRenderTarget.texture; U.tDepth.value = d; U.intensity.value = ao.blendIntensity; U.cameraNear.value = cam.near; U.cameraFar.value = cam.far; U.persp.value = cam.isPerspectiveCamera ? 1 : 0;
+        { const A = acc.uniforms; A.tNew.value = ao.pdRenderTarget.texture; A.tOld.value = T.hist[T.i].texture; A.tDepth.value = d; A.fresh.value = T.still ? 0 : 1;
+          A.cameraNear.value = cam.near; A.cameraFar.value = cam.far; A.persp.value = cam.isPerspectiveCamera ? 1 : 0; T.i = 1 - T.i; ao.renderPass(r, acc, T.hist[T.i]); }
+        const U = mix.uniforms; U.tDiffuse.value = readBuffer.texture; U.tAO.value = T.hist[T.i].texture; U.tDepth.value = d; U.intensity.value = ao.blendIntensity; U.cameraNear.value = cam.near; U.cameraFar.value = cam.far; U.persp.value = cam.isPerspectiveCamera ? 1 : 0;
         ao.renderPass(r, mix, ao.renderToScreen ? null : writeBuffer); };
     } else ao.render = (...args)=>{ // geometry pre-pass (?ao=geo): leave out the sky, clouds and cut-out foliage, which it would draw as solid quads
       const v=[sky.visible, clouds.visible, grassGroup.visible]; sky.visible=clouds.visible=grassGroup.visible=false;
@@ -5246,6 +5280,7 @@ function resize(){
 addEventListener('resize', resize);
 let last = performance.now();
 function loop(now){
+  frameNo++;
   const frameMs = Math.max(0, now-last), dt = Math.min(.05, frameMs/1000); last = Math.max(last, now);   // the first frame's timestamp can predate the script
   updateStats(now, frameMs); renderer.info.reset();
   if (playing){ sunUI.time += dt*1.2; if (sunUI.time>21.5){ sunUI.time=21.5; playing=false; document.getElementById('s-play').textContent='Play day'; } sTime.value=sunUI.time; updateSun(); }

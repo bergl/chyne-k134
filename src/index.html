@@ -573,7 +573,7 @@ table.facts td{border-bottom:1px solid var(--line)}
   window.__bootT = setTimeout(function(){ note('Still loading the 3D engine… check the connection, or reload the page.'); }, 20000);   // cleared when the engine has arrived
   window.addEventListener('error', function(e){
     if (e.target && e.target.tagName === 'SCRIPT') note('The 3D engine could not be loaded. Check the connection and reload the page.', true);
-    else if (e.target === window) note('The 3D model could not start' + (e.message ? ' (' + String(e.message).slice(0, 90) + ')' : '') + '. Reload the page; it needs a browser with WebGL 2.', true);
+    else if (e.target === window) note('The 3D model could not start' + (e.message ? ' (' + String(e.message).replace(/^Uncaught (\w*Error: )?/, '').slice(0, 90).replace(/\.$/, '') + ')' : '') + '. Reload the page; it needs a browser with WebGL 2.', true);
   }, true);
 })();
 </script>
@@ -5169,16 +5169,18 @@ function scheduleShadows(now, moving){
    Redrawing the whole shadow map whenever the dog takes a step costs about as much as drawing the scene again.
    The map of the still scene is kept in a second target instead. When only the movers (dog, cat, swimmer, ball)
    have changed, the patches they covered are copied back from it and the movers are drawn again. */
-const shadowSplit = { on: renderer.capabilities.isWebGL2 && !/[?&#]shadow=full\b/.test(location.href), cache:null, staticDirty:true, rects:[], dyn:new THREE.Object3D(), full:0, part:0 };
+const shadowSplit = { on: renderer.capabilities.isWebGL2 && !/[?&#]shadow=full\b/.test(location.href), cache:null, staticDirty:true, rects:[], dyn:new THREE.Object3D(), full:0, part:0, probe:3 };
 { const S = shadowSplit, sm = renderer.shadowMap, renderAll = sm.render, clearAll = renderer.clear, _c = new THREE.Vector3();
   const fb = rt=>renderer.properties.get(rt).__webglFramebuffer;
   const M = [[dogGroup, 1.7, .4], [catGroup, 1.1, .2], [swimmer, 2.3, 0], [poolFloat, 2.1, 0], [ball, .45, 0]], movers = ()=>M;   // [root, radius, centre height]; the lady's slight stirring is part of the still picture (refreshed every 2 s)
   const copy = (from, to, rects)=>{ // colour (the packed depth the shaders read) and the depth buffer, patch by patch
     const gl = renderer.getContext(), st = renderer.state;
     st.buffers.color.setMask(true); st.buffers.depth.setMask(true);
+    const probe = S.probe > 0 && rects.length > 0; if (probe) while (gl.getError() !== gl.NO_ERROR);   // the first few copies are checked: a graphics driver that refuses them gets the plain full redraw instead
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fb(from));        // `to` is the draw target three has just bound; the read binding is set here directly (three's own record of it goes stale whenever it binds both at once)
     for (const r of rects) gl.blitFramebuffer(r[0], r[1], r[2], r[3], r[0], r[1], r[2], r[3], gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT, gl.NEAREST);
-    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fb(to)); };       // back in step with the draw target
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fb(to));          // back in step with the draw target
+    if (probe){ S.probe--; if (gl.getError() !== gl.NO_ERROR){ S.on = false; S.probe = 0; shadowDirty = true; console.warn('shadow patching is not available here; shadows are redrawn in full'); } } };
   const restore = ()=>{ // called in place of clearing the map: put back what the movers covered, then note where they are now
     const map = sun.shadow.map, cam = sun.shadow.camera, W = map.width, H = map.height;
     copy(S.cache, map, S.rects); S.rects.length = 0;

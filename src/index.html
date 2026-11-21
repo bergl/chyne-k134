@@ -13,6 +13,15 @@
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutputPass.js">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/Pass.js">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/CopyShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/ShaderPass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/MaskPass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/GTAOShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/PoissonDenoiseShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/math/SimplexNoise.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/LuminosityHighPassShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/SMAAShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/OutputShader.js">
 <style>
 /* Layout: full-bleed 3D canvas; drafting-sheet toolbar on top, tool sheet left, selection card right (bottom sheets on phones). */
 :root{
@@ -896,7 +905,9 @@ function appH(){
 function syncAppH(){ if (IOS_PWA) document.documentElement.style.setProperty('--app-h', appH() + 'px'); }
 if (IOS_PWA){ document.documentElement.classList.add('ios-pwa'); syncAppH(); }
 const isSmall = Math.min(innerWidth, appH()) < 700;
-const renderer = new THREE.WebGLRenderer({canvas, antialias:true, preserveDrawingBuffer:false});
+// an opaque drawing buffer (nothing shows through the view, and the browser composites it more cheaply); the faster graphics card where there are two
+const glContext = canvas.getContext('webgl2', {alpha:false, depth:true, stencil:false, antialias:true, premultipliedAlpha:true, preserveDrawingBuffer:false, powerPreference:'high-performance'});
+const renderer = new THREE.WebGLRenderer(glContext ? {canvas, context:glContext} : {canvas, antialias:true, preserveDrawingBuffer:false});
 renderer.debug.checkShaderErrors = /[?&#]debug\b/.test(location.href);   // the checks block on every new shader program: off unless asked for
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
@@ -2590,18 +2601,18 @@ const sphereGeo = new THREE.IcosahedronGeometry(1, 1);
 function hashStr(s){ let h=2166136261; for (const ch of s){ h^=ch.charCodeAt(0); h=Math.imul(h,16777619);} return (h>>>0)%2147483646+1; }
 
 /* ---------- procedural trees: branching skeleton + leaf / blossom cards that sway in the wind ---------- */
-const windU = { uTime:{value:0}, uWind:{value:.45} };
+const windU = { uTime:{value:0}, uWind:{value:.45}, uAoOn:{value:0} };   // uAoOn: 1 only while the frame is drawn for the ambient-occlusion pass, which reads the alpha channel as "how much occlusion"; everywhere else alpha stays 1
 function windify(material, amp, key, ao=.3){ // `key` only labels the material; every wind material with the same features shares one shader program. ao: how much ambient occlusion it takes
   const uAmp = {value:amp}, uAo = {value:ao}; material.userData.wind = key;
   material.onBeforeCompile = (sh)=>{
-    sh.uniforms.uTime = windU.uTime; sh.uniforms.uWind = windU.uWind; sh.uniforms.uAmp = uAmp; sh.uniforms.uAoMask = uAo;
+    sh.uniforms.uTime = windU.uTime; sh.uniforms.uWind = windU.uWind; sh.uniforms.uAmp = uAmp; sh.uniforms.uAoMask = uAo; sh.uniforms.uAoOn = windU.uAoOn;
     sh.vertexShader = 'attribute float aTip;\nattribute float aPhase;\nuniform float uTime;\nuniform float uWind;\nuniform float uAmp;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
       vec4 wpos = modelMatrix * vec4(transformed, 1.0);
       float gust = 0.5 + 0.3 * sin(uTime * 0.9 - wpos.x * 0.32 - wpos.z * 0.12) + 0.2 * sin(uTime * 0.37 + wpos.z * 0.05); // gusts travel across the garden
       float sway = aTip * uAmp * (0.2 + uWind * 1.8) * gust;
       vec3 blown = vec3(sway * (sin(uTime * 1.7 + wpos.x * 0.8 + wpos.z * 0.3 + aPhase) + 0.6), -sway * 0.15, sway * 0.55 * cos(uTime * 1.3 + wpos.x * 0.4 + wpos.z * 0.9 + aPhase));
       transformed += blown * mat3(modelMatrix);   // the wind blows in one direction for the whole garden, however a plant is turned (and whether it is drawn on its own or in a batch)`);
-    sh.fragmentShader = 'uniform float uAoMask;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  gl_FragColor.a = uAoMask;   // leaves and grass take less ambient occlusion (read by the AO pass)');
+    sh.fragmentShader = 'uniform float uAoMask;\nuniform float uAoOn;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  gl_FragColor.a = mix(1.0, uAoMask, uAoOn);   // leaves and grass take less ambient occlusion (read by the AO pass)');
   };
   material.customProgramCacheKey = ()=>'wind';
   return material;
@@ -5129,7 +5140,8 @@ function updateFall(dt, now){
 
 function renderFrame(){
   if (photo){ if (photo.kind==='pt') photo.pt.renderSample(); else accumStep(); return; }
-  if (composer) composer.render(); else renderer.render(scene, camera);
+  if (composer){ windU.uAoOn.value = (aoPass && aoPass.enabled && aoPass.mixMaterial) ? 1 : 0; composer.render(); windU.uAoOn.value = 0; }   // the occlusion share travels in the alpha channel only when the pass that reads it runs
+  else renderer.render(scene, camera);
 }
 
 /* ---------- frame budget ----------

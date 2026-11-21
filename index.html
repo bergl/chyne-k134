@@ -15,6 +15,28 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Chýně K-134 Garden Studio</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/","three/examples/jsm/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/","three-mesh-bvh":"https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.6/build/index.module.js","three-gpu-pathtracer":"https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.23/build/index.module.js"}}
+</script>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/GTAOPass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/SMAAPass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutputPass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/Pass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/CopyShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/ShaderPass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/MaskPass.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/GTAOShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/PoissonDenoiseShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/math/SimplexNoise.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/LuminosityHighPassShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/SMAAShader.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/OutputShader.js">
 <style>
 /* Layout: full-bleed 3D canvas; drafting-sheet toolbar on top, tool sheet left, selection card right (bottom sheets on phones). */
 :root{
@@ -40,6 +62,19 @@ body.walking #cutBox{display:none}   /* while walking the house is always shown 
 .ios-pwa,.ios-pwa body{height:var(--app-h,100%);overflow:hidden}
 .ios-pwa #app{bottom:auto;height:var(--app-h,100%)}
 #view{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
+/* shown over the empty canvas while the model is built and its shaders compile; the bar moves on the compositor, so it keeps going while scripts run */
+#boot{position:absolute;inset:0;z-index:1;display:grid;place-items:center;background:var(--paper);transition:opacity .4s ease;pointer-events:none}
+#boot.done{opacity:0}
+#boot.err .boot-bar{display:none}
+#boot.err #boot-msg{max-width:min(420px,84vw);text-align:center;color:var(--warn)}
+#app.booting > :not(#view):not(#boot){visibility:hidden}   /* the toolbar and panels appear once they are set up, never half-built */
+.boot-card{display:grid;gap:9px;justify-items:center;font:500 13.5px var(--f-body);color:var(--muted)}
+.boot-card b{font:600 26px var(--f-display);letter-spacing:.06em;color:var(--ink)}
+.boot-bar{width:190px;height:3px;border-radius:2px;background:var(--line);overflow:hidden}
+.boot-bar i{display:block;width:38%;height:100%;border-radius:2px;background:var(--accent);animation:boot-slide 1.05s ease-in-out infinite alternate;will-change:transform}
+.boot-bar.det i{animation:none;width:100%;transform-origin:0 50%;transform:scaleX(.04);transition:transform .2s linear}
+@keyframes boot-slide{from{transform:translateX(-30%)}to{transform:translateX(195%)}}
+@media (prefers-reduced-motion:reduce){.boot-bar i{animation:none}}
 button,select,input{font:inherit;color:inherit}
 button{cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -445,8 +480,9 @@ table.facts td{border-bottom:1px solid var(--line)}
 </style>
 </head>
 <body>
-<div id="app">
+<div id="app" class="booting">
   <canvas id="view" aria-label="3D model of house K-134 and garden"></canvas>
+  <div id="boot" role="status"><div class="boot-card"><b>K-134</b><span id="boot-msg">Loading the 3D model…</span><div class="boot-bar"><i></i></div></div></div>
   <div id="labels"></div>
 
   <div class="bar">
@@ -555,8 +591,16 @@ table.facts td{border-bottom:1px solid var(--line)}
   </svg>
 </div>
 
-<script type="importmap">
-{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/","three/examples/jsm/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/","three-mesh-bvh":"https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.6/build/index.module.js","three-gpu-pathtracer":"https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.23/build/index.module.js"}}
+<script>
+/* the loading note never spins forever: it says so when the 3D engine is slow to arrive, cannot be loaded, or the model fails to start */
+(function(){ var boot = document.getElementById('boot'), msg = document.getElementById('boot-msg');
+  function note(t, failed){ if (!boot || !boot.isConnected || boot.classList.contains('done')) return; msg.textContent = t; if (failed) boot.classList.add('err'); }
+  window.__bootT = setTimeout(function(){ note('Still loading the 3D engine… check the connection, or reload the page.'); }, 20000);   // cleared when the engine has arrived
+  window.addEventListener('error', function(e){
+    if (e.target && e.target.tagName === 'SCRIPT') note('The 3D engine could not be loaded. Check the connection and reload the page.', true);
+    else if (e.target === window) note('The 3D model could not start' + (e.message ? ' (' + String(e.message).replace(/^Uncaught (\w*Error: )?/, '').slice(0, 90).replace(/\.$/, '') + ')' : '') + '. Reload the page; it needs a browser with WebGL 2.', true);
+  }, true);
+})();
 </script>
 <script type="module">
 import * as THREE from 'three';
@@ -569,6 +613,8 @@ import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+clearTimeout(window.__bootT);                                                                                   // the engine is here
+await new Promise(r=>{ const t = setTimeout(r, 150); requestAnimationFrame(()=>{ clearTimeout(t); setTimeout(r, 0); }); });   // one paint first: the toolbar and the loading note appear before the heavy work
 
 /* ================= SOURCE DATA (metres, plan frame) =================
    Plan frame: origin = survey point 2 (NW-garden corner of the house),
@@ -875,7 +921,10 @@ function appH(){
 function syncAppH(){ if (IOS_PWA) document.documentElement.style.setProperty('--app-h', appH() + 'px'); }
 if (IOS_PWA){ document.documentElement.classList.add('ios-pwa'); syncAppH(); }
 const isSmall = Math.min(innerWidth, appH()) < 700;
-const renderer = new THREE.WebGLRenderer({canvas, antialias:true, preserveDrawingBuffer:false});
+// an opaque drawing buffer (nothing shows through the view, and the browser composites it more cheaply); the faster graphics card where there are two
+const glContext = canvas.getContext('webgl2', {alpha:false, depth:true, stencil:false, antialias:true, premultipliedAlpha:true, preserveDrawingBuffer:false, powerPreference:'high-performance'});
+const renderer = new THREE.WebGLRenderer(glContext ? {canvas, context:glContext} : {canvas, antialias:true, preserveDrawingBuffer:false});
+renderer.debug.checkShaderErrors = /[?&#]debug\b/.test(location.href);   // the checks block on every new shader program: off unless asked for
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -919,6 +968,7 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(3000, 48, 24), new THREE.Sha
       vec3 col = mix(horizon, top, pow(h, 0.55));
       float s = max(dot(d, normalize(sunDir)), 0.0);
       col += sunCol * (pow(s, 900.0) * 3.0 + pow(s, 12.0) * 0.35);
+      col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * (1.5 / 255.0);   // a grain finer than one colour step: no banding in the gradient
       gl_FragColor = vec4(col, 1.0);
       #include <colorspace_fragment>
     }`
@@ -949,7 +999,7 @@ function canvasTex(size, draw, rep=1){
   const c = document.createElement('canvas'); c.width=c.height=size;
   const g = c.getContext('2d'); draw(g,size);
   const t = new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(rep,rep);
-  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); return t;   // stays sharp at shallow angles (paving, floors)
 }
 let seed = 7; const rnd = ()=>{ seed = (seed*16807)%2147483647; return (seed-1)/2147483646; };
 const grassTex = canvasTex(256,(g,s)=>{ g.fillStyle='#fff';g.fillRect(0,0,s,s); for(let i=0;i<5000;i++){const v=200+rnd()*55|0; g.fillStyle=`rgb(${v},${v},${v})`; g.fillRect(rnd()*s,rnd()*s,1.5,3);} }, 1);
@@ -1309,7 +1359,7 @@ function furnMats(){
     hob:t({color:0x0a0b0e, roughness:.15, metalness:.1}, 'Glass'), curtain:t({color:0x3a3a3c, roughness:.95}, 'Curtain'), cream:t({color:0xd9d1c3, roughness:.95}, 'Fabric'),
     rope:t({color:0xe9e5dc, roughness:.9}, 'Rope'), frameNavy:t({color:0x1f2a4b, roughness:.7}, 'Frame'), frameWhite:t({color:0xf4f2ee, roughness:.6}, 'Frame'), frameLight:t({color:0xcfc6b6, roughness:.6}, 'Frame'),
     paint:t({color:0x9a938a, roughness:.95}, 'Paint'), ceiling:t({color:0x17181a, roughness:.9}, 'Ceiling'), led:t({color:0xffffff, emissive:0xfff4e0, emissiveIntensity:1.4}),
-    glassy:Object.assign(new THREE.MeshPhysicalMaterial({color:0xe3e9ea, roughness:.08, transparent:true, opacity:.35}), {userData:{part:'Glass'}}),
+    glassy:Object.assign(new THREE.MeshStandardMaterial({color:0xe3e9ea, roughness:.08, transparent:true, opacity:.35}), {userData:{part:'Glass'}}),
     cageMat:t({color:0x111111, roughness:.6, wireframe:true}, 'Metal'), bulb:t({color:0xfff0c0, emissive:0xffd890, emissiveIntensity:1.6}),
     greyPot:t({color:0x6e6e6c, roughness:.8}, 'Pot'), bluePot:t({color:0x1f3f8f, roughness:.5}, 'Pot'), pumpkin:t({color:0xe08a2e, roughness:.6}, 'Pumpkin'), fruit:t({color:0xf08a2a, roughness:.5}, 'Fruit'),
     rose:t({color:0x9e1f2c, roughness:.8}, 'Flowers'), magnetRed:t({color:0xc8322e, roughness:.6}, 'Magnets'), magnetBlue:t({color:0x3a5fa8, roughness:.6}, 'Magnets') };
@@ -1703,7 +1753,7 @@ function makeLoungerLady(seedStr, seatY, backAng, hingeZ){
     const t = (o, part)=>{ const m = new THREE.MeshStandardMaterial(o); m.userData.part = part; return m; };
     ladyMats = { skin:t({color:0xdcab88, roughness:.55}, 'Skin'), suit:t({color:0xe0565c, roughness:.55}, 'Swimsuit'), hair:t({color:0x8c6236, roughness:.75}, 'Hair'),
       straw:t({color:0xe7d3a1, roughness:.85}, 'Hat'), ribbon:t({color:0x1d1d1f, roughness:.5}, 'Hat'), shades:t({color:0x111214, roughness:.08, metalness:.6}, 'Sunglasses'),
-      cover:t({color:0x2f6b8f, roughness:.6}, 'Book'), page:t({color:0xf6f2e8, roughness:.9, side:THREE.DoubleSide}, 'Book'), wood:t({color:0xb07a48, roughness:.7}, 'Side table'),
+      cover:t({color:0x2f6b8f, roughness:.6}, 'Book'), page:t({color:0xf6f2e8, roughness:.9}, 'Book'), wood:t({color:0xb07a48, roughness:.7}, 'Side table'),
       juice:new THREE.MeshStandardMaterial({color:0xf29a2e, roughness:.2, transparent:true, opacity:.88}), glass:new THREE.MeshStandardMaterial({color:0xffffff, roughness:.05, transparent:true, opacity:.28, depthWrite:false}),
       lemon:t({color:0xf2e04a, roughness:.5}, 'Drink') };
   }
@@ -1779,7 +1829,7 @@ function updateLadies(now){
 }
 function makeTesla(){
   if (!teslaMats){
-    const t = (o, part)=>{ const m = new THREE.MeshPhysicalMaterial(o); m.userData.part = part; return m; };
+    const t = (o, part)=>{ const m = o.clearcoat ? new THREE.MeshPhysicalMaterial(o) : new THREE.MeshStandardMaterial(o); m.userData.part = part; return m; };   // the clear-coat shader only for the paint and the glass
     teslaMats = {
       paint: t({color:0xf3f2ee, roughness:.32, metalness:.05, clearcoat:1, clearcoatRoughness:.06}, 'Paint'),
       glass: t({color:0x0d1013, roughness:.04, metalness:.6, clearcoat:1, clearcoatRoughness:.02}, 'Windows'),
@@ -2012,6 +2062,11 @@ function exteriorShell(gf, uf, roof){ // the outer envelope; the identical neigh
   // the furniture from the sales plan drawings is now editable objects (see DEFAULT_DESIGN, built-ins v8)
   { const car = makeTesla(); car.position.set(9.9,-0.25,1.96); car.rotation.y = Math.PI; car.userData.furniture = true; G.gf.add(car); furniture.push(car); FURN_BOXES.push({x:9.9, z:1.96, w:4.7, d:1.85, f:0}); } // Model 3 parked nose-in
   house.traverse(o=>{ if(o.isMesh){ o.castShadow = o.material!==mat.glass; o.receiveShadow = true; } });
+  for (const grp of [G.gf, G.uf]){ const by = new Map();      // the room floors are drawn as one mesh per material and storey; the per-room slabs stay for clicking, on a layer no camera draws
+    for (const m of roomMeshes) if (m.parent === grp){ if (!by.has(m.material)) by.set(m.material, []); by.get(m.material).push(m); }
+    for (const [mt, list] of by){ if (list.length < 2) continue;
+      const mm = new THREE.Mesh(mergeGeometries(list.map(m=>m.geometry), false), mt); mm.castShadow = mm.receiveShadow = true; mm.raycast = ()=>{}; mm.userData.keep = true; grp.add(mm);
+      for (const m of list) m.layers.set(1); } }
   for (const k of ['gf','uf','roof']) mergeMeshes(G[k]);
 })();
 
@@ -2113,6 +2168,9 @@ const cityGroup = new THREE.Group(); scene.add(cityGroup);
    storing colour and surface direction so the sun still lights them correctly.
    Each frame a quadtree is walked front to back from the camera: cells outside the view are skipped, and an
    occlusion horizon (the skyline of the buildings already passed) hides anything that lies completely below it.
+   The horizon remembers how far away the wall that set it is, and only hides things that are farther than that wall,
+   so the result never depends on the walking order. K-134 itself is never used to hide anything: its glass and its
+   cut-away views can be looked through.
    Houses near the plot also cast shadows through invisible LOD1 stand-ins, so their shadows never depend on the view. */
 const nb = {ready:false, stats:{full:0, simple:0, imp:0, off:0, occ:0}};
 function buildNeighbours(){
@@ -2169,18 +2227,24 @@ function buildNeighbours(){
   const albOp = new THREE.MeshBasicMaterial({vertexColors:true}), albGl = new THREE.MeshBasicMaterial({color:0x2c3a44});
   const nrm = new THREE.ShaderMaterial({side:THREE.DoubleSide, vertexShader:`varying vec3 vN; void main(){ vN = normal; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
     fragmentShader:`varying vec3 vN; void main(){ vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n; gl_FragColor = vec4(n*.5+.5, 1.); }`});
-  const oc = new THREE.OrthographicCamera(-R, R, R, -R, .1, 200), prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha(), prevAuto = renderer.autoClear;
-  renderer.autoClear = false; renderer.setClearColor(0x000000, 0);
-  for (const [rt, mo, mg] of [[rtA, albOp, albGl], [rtN, nrm, nrm]]){
-    aOp.material = mo; aGl.material = mg;
-    rt.viewport.set(0, 0, rt.width, rt.height); rt.scissorTest = false; renderer.setRenderTarget(rt); renderer.clear();
-    EL.forEach((el, j)=>{ for (let i=0;i<AZ;i++){
-      const az = i/AZ*Math.PI*2, e = el*Math.PI/180;
-      oc.position.set(C.x + Math.cos(e)*Math.cos(az)*80, C.y + Math.sin(e)*80, C.z + Math.cos(e)*Math.sin(az)*80); oc.up.set(0,1,0); oc.lookAt(C); oc.updateMatrixWorld();
-      rt.viewport.set(i*T, j*T, T, T); rt.scissor.set(i*T, j*T, T, T); rt.scissorTest = true; renderer.setRenderTarget(rt); renderer.render(aScene, oc); } });
-    rt.scissorTest = false;
-  }
-  renderer.setRenderTarget(null); renderer.autoClear = prevAuto; renderer.setClearColor(prevClear, prevAlpha);
+  nb.bake = ()=>{ // the pictures are drawn the first time a house is far enough away to need one (or while the page is idle), not while it loads
+    nb.bake = null;
+    const oc = new THREE.OrthographicCamera(-R, R, R, -R, .1, 200), prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha(), prevAuto = renderer.autoClear, prevRT = renderer.getRenderTarget();
+    renderer.autoClear = false; renderer.setClearColor(0x000000, 0);
+    for (const [rt, mo, mg] of [[rtA, albOp, albGl], [rtN, nrm, nrm]]){
+      aOp.material = mo; aGl.material = mg;
+      rt.viewport.set(0, 0, rt.width, rt.height); rt.scissorTest = false; renderer.setRenderTarget(rt); renderer.clear();
+      rt.texture.generateMipmaps = false;                                  // the mip chain is built once, after the last tile
+      EL.forEach((el, j)=>{ for (let i=0;i<AZ;i++){
+        const az = i/AZ*Math.PI*2, e = el*Math.PI/180;
+        oc.position.set(C.x + Math.cos(e)*Math.cos(az)*80, C.y + Math.sin(e)*80, C.z + Math.cos(e)*Math.sin(az)*80); oc.up.set(0,1,0); oc.lookAt(C); oc.updateMatrixWorld();
+        if (j === EL.length-1 && i === AZ-1) rt.texture.generateMipmaps = true;
+        rt.viewport.set(i*T, j*T, T, T); rt.scissor.set(i*T, j*T, T, T); rt.scissorTest = true; renderer.setRenderTarget(rt); renderer.render(aScene, oc); } });
+      rt.scissorTest = false;
+    }
+    renderer.setRenderTarget(prevRT); renderer.autoClear = prevAuto; renderer.setClearColor(prevClear, prevAlpha);
+    for (const m of [albOp, albGl, nrm]) m.dispose();
+  };
   const ig = new THREE.InstancedBufferGeometry();
   ig.setAttribute('position', new THREE.Float32BufferAttribute([-1,-1,0, 1,-1,0, 1,1,0, -1,1,0], 3)); ig.setIndex([0,1,2, 0,2,3]);
   nb.iCenter = new THREE.InstancedBufferAttribute(new Float32Array(H.length*3), 3).setUsage(THREE.DynamicDrawUsage);
@@ -2223,20 +2287,20 @@ function buildNeighbours(){
   nb.imp = new THREE.Mesh(ig, impMat); nb.imp.frustumCulled = false; nb.imp.userData.noAO = true; cityGroup.add(nb.imp);
   // --- per-house data, shadow stand-ins, quadtree
   const ent = [], proxy = [], P = new THREE.Vector3();
-  const inset = insetPoly(GF_POLY, .5);
+  const inset = insetPoly(UF_POLY, .5);            // the upper-floor outline: inside the house from the ground to the parapet (the loggia corner is open above the balustrade)
   const footprint = (M, t, poly)=>poly.map(([x,z])=>[M[0]*x + M[1]*z + t[0], M[2]*x + M[3]*z + t[1]]);
   const bounds = (pts, h)=>{ let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for (const [x,z] of pts){ x0=Math.min(x0,x); x1=Math.max(x1,x); z0=Math.min(z0,z); z1=Math.max(z1,z); } return [x0,x1,z0,z1,h]; };
   nb.houses = H.map(([a,b,c,d,tx,ty])=>{
     const mir = a*d - b*c < 0 ? 1 : 0, ra = a, rb = mir ? -b : b, rc = c, rd = mir ? -d : d;
     const m4 = new THREE.Matrix4().set(ra,0,rb,tx, 0,1,0,0, rc,0,rd,ty, 0,0,0,1);
     const h = {m4, mir, axes:[a, c, b, d], c:new THREE.Vector3(a*C.x + b*C.z + tx, C.y, c*C.x + d*C.z + ty), lod:-1};
-    const e = {house:h, x:h.c.x, z:h.c.z, b:bounds(footprint([a,b,c,d],[tx,ty],GF_POLY), 7.7), occ:footprint([a,b,c,d],[tx,ty],inset), oh:6.4};
+    const fb = bounds(footprint([a,b,c,d],[tx,ty],GF_POLY), 9.2); fb[0] -= 1; fb[1] += 1; fb[2] -= 1; fb[3] += 1;   // a little larger than the house: a far-away picture of it can overshoot the true outline
+    const e = {house:h, x:h.c.x, z:h.c.z, b:fb, occ:footprint([a,b,c,d],[tx,ty],inset), oh:6.4};
     ent.push(e);
     if (Math.hypot(h.c.x + 3, h.c.z - 5) < 75) proxy.push(nb.lod1[mir].clone().applyMatrix4(m4));
     return h; });
   for (const b of CITY.b){ const pts = []; for (let i=1;i<b.length;i+=2) pts.push([b[i], b[i+1]]);
     const bb2 = bounds(pts, b[0]); ent.push({x:(bb2[0]+bb2[1])/2, z:(bb2[2]+bb2[3])/2, b:bb2, occ:pts, oh:b[0] - .3}); }
-  { const own = GF_POLY.map(p=>[p[0], p[1]]); ent.push({x:7.7, z:4.4, b:bounds(own, 6.9), occ:insetPoly(GF_POLY, .3), oh:6.5}); }   // K-134 itself hides what is behind it
   if (proxy.length){ const pm = new THREE.Mesh(mergeGeometries(proxy), new THREE.MeshBasicMaterial({colorWrite:false, depthWrite:false}));
     pm.castShadow = true; pm.userData.noAO = true; cityGroup.add(pm); }
   const tree = (list, depth)=>{
@@ -2250,30 +2314,35 @@ function buildNeighbours(){
     n.kids = q.map(l=>l.length ? tree(l, depth+1) : null); return n; };
   nb.root = tree(ent, 0); nb.ready = true;
 }
-const NB_HZ = 192, nbHorizon = new Float32Array(NB_HZ), nbFrustum = new THREE.Frustum(), nbPS = new THREE.Matrix4();
+const NB_HZ = 192, nbHorizon = new Float32Array(NB_HZ), nbHzDist = new Float32Array(NB_HZ), nbFrustum = new THREE.Frustum(), nbPS = new THREE.Matrix4();
+let nbCx = 0, nbCz = 0;                                         // the camera in plan, for distances
 const nbLists = [[[],[]], [[],[]], []];
 function nbProj(x, y, z, out){ const e = nbPS.elements, w = e[3]*x + e[7]*y + e[11]*z + e[15];
   out[0] = (e[0]*x + e[4]*y + e[8]*z + e[12])/w; out[1] = (e[1]*x + e[5]*y + e[9]*z + e[13])/w; out[2] = w; return out; }
 const _p = [0,0,0], _q = [0,0,0], _r = [0,0,0], _s = [0,0,0];
-function nbOccluded(b){ // is this box completely below the occlusion horizon?
+function nbOccluded(b){ // is this box completely below the occlusion horizon, and behind the walls that drew it?
   let x0 = 1e9, x1 = -1e9, y1 = -1e9;
   for (let i=0;i<8;i++){ nbProj(i&1 ? b[1] : b[0], i&2 ? b[4] : -.3, i&4 ? b[3] : b[2], _p); if (_p[2] < .3) return false;
     x0 = Math.min(x0, _p[0]); x1 = Math.max(x1, _p[0]); y1 = Math.max(y1, _p[1]); }
   const c0 = Math.max(0, Math.floor((x0+1)*.5*NB_HZ)), c1 = Math.min(NB_HZ-1, Math.floor((x1+1)*.5*NB_HZ));
-  for (let c=c0;c<=c1;c++) if (nbHorizon[c] < y1) return false;
+  const d = Math.hypot(Math.max(b[0]-nbCx, 0, nbCx-b[1]), Math.max(b[2]-nbCz, 0, nbCz-b[3]));     // the nearest point of the box, in plan
+  for (let c=c0;c<=c1;c++) if (nbHorizon[c] < y1 || nbHzDist[c] > d) return false;
   return c1 >= c0;
 }
 function nbOccluder(e){ // raise the horizon along the top edges of a building's walls (only where the whole wall covers the column)
-  const P = e.occ, h = e.oh;
+  const P = e.occ, h = e.oh, b = e.b;
+  if (nbCx > b[0]-2 && nbCx < b[1]+2 && nbCz > b[2]-2 && nbCz < b[3]+2){ // the camera is inside this building or right at its wall: it hides nothing
+    const cp = [nbCx, nbCz]; if (pip(cp, P)) return; for (let i=0;i<P.length;i++) if (segDist(cp, P[i], P[(i+1)%P.length]) < 1.5) return; }
   for (let i=0;i<P.length;i++){
     const [ax,az] = P[i], [bx,bz] = P[(i+1)%P.length];
     nbProj(ax,h,az,_p); nbProj(bx,h,bz,_q); nbProj(ax,0,az,_r); nbProj(bx,0,bz,_s);
     if (_p[2] < .3 || _q[2] < .3 || _r[2] < .3 || _s[2] < .3) continue;
     const lo = Math.max(Math.min(_p[0],_q[0]), Math.min(_r[0],_s[0])), hi = Math.min(Math.max(_p[0],_q[0]), Math.max(_r[0],_s[0]));
     if (hi <= lo) continue;
-    const c0 = Math.max(0, Math.ceil((lo+1)*.5*NB_HZ - .5)), c1 = Math.min(NB_HZ-1, Math.floor((hi+1)*.5*NB_HZ - .5)), dx = _q[0]-_p[0];
-    for (let c=c0;c<=c1;c++){ const xc = (c+.5)/NB_HZ*2 - 1, y = Math.abs(dx) > 1e-6 ? _p[1] + (_q[1]-_p[1])*(xc-_p[0])/dx : Math.min(_p[1], _q[1]);
-      if (y > nbHorizon[c]) nbHorizon[c] = y; }
+    const c0 = Math.max(0, Math.ceil((lo+1)*.5*NB_HZ)), c1 = Math.min(NB_HZ-1, Math.floor((hi+1)*.5*NB_HZ) - 1), dx = _q[0]-_p[0];   // only columns the wall spans from edge to edge
+    const far = Math.max(Math.hypot(ax-nbCx, az-nbCz), Math.hypot(bx-nbCx, bz-nbCz)), k = Math.abs(dx) > 1e-6 ? (_q[1]-_p[1])/dx : 0;
+    for (let c=c0;c<=c1;c++){ const xl = c/NB_HZ*2 - 1, y = k ? Math.min(_p[1] + k*(xl-_p[0]), _p[1] + k*(xl + 2/NB_HZ - _p[0])) : Math.min(_p[1], _q[1]);   // the lower end of the wall top within the column
+      if (y > nbHorizon[c]){ nbHorizon[c] = y; nbHzDist[c] = far; } }
   }
 }
 function updateNeighbours(){
@@ -2282,8 +2351,8 @@ function updateNeighbours(){
   nbPS.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); nbFrustum.setFromProjectionMatrix(nbPS);
   const cp = cam.position, ortho = !cam.isPerspectiveCamera;
   // the horizon test assumes upright views of buildings standing on the ground: off for plan view and steep aerial views
-  const dir = cam.getWorldDirection(_v3), occl = !ortho && dir.y > -.6 && cp.y < 45;
-  nbHorizon.fill(-2); S.full = S.simple = S.imp = S.off = S.occ = 0;
+  const dir = cam.getWorldDirection(_v3), occl = !ortho && dir.y > -.6 && cp.y < 45 && cp.y > .4;
+  nbHorizon.fill(-2); nbHzDist.fill(0); nbCx = cp.x; nbCz = cp.z; S.full = S.simple = S.imp = S.off = S.occ = 0;
   for (const l of [nbLists[0][0], nbLists[0][1], nbLists[1][0], nbLists[1][1], nbLists[2]]) l.length = 0;
   const visit = n=>{
     if (!nbFrustum.intersectsBox(n.box)){ S.off += n.nh; return; }
@@ -2308,11 +2377,12 @@ function updateNeighbours(){
     for (const k of [q, q^1, q^2, q^3]) if (n.kids[k]) visit(n.kids[k]);
   };
   visit(nb.root);
-  const fill = (im, list)=>{ for (let i=0;i<list.length;i++) im.setMatrixAt(i, list[i].m4); im.count = list.length; im.instanceMatrix.needsUpdate = true; };
+  const fill = (im, list)=>{ for (let i=0;i<list.length;i++) im.setMatrixAt(i, list[i].m4); im.count = list.length; im.visible = list.length > 0; if (list.length) im.instanceMatrix.needsUpdate = true; };
   for (const v of [0,1]){ fill(nb.im[0][v], nbLists[0][v]); fill(nb.im[1][v], nbLists[0][v]); fill(nb.im[2][v], nbLists[1][v]); }
   const I = nbLists[2], C3 = nb.iCenter.array, A4 = nb.iAxes.array;
   for (let i=0;i<I.length;i++){ const h = I[i]; C3[i*3] = h.c.x; C3[i*3+1] = h.c.y; C3[i*3+2] = h.c.z; A4.set(h.axes, i*4); }
-  nb.iCenter.needsUpdate = nb.iAxes.needsUpdate = true; nb.imp.geometry.instanceCount = I.length;
+  if (I.length && nb.bake) nb.bake();
+  nb.iCenter.needsUpdate = nb.iAxes.needsUpdate = true; nb.imp.geometry.instanceCount = I.length; nb.imp.visible = I.length > 0;
   // impostor lighting follows the scene's sun, sky light, sky environment and fog
   const U = nb.impU;
   U.uSunDir.value.copy(sun.position).sub(sun.target.position).normalize();
@@ -2325,7 +2395,8 @@ const _v3 = new THREE.Vector3();
 function nbForPhotoPT(on){ // the path tracer cannot draw instanced meshes: swap in one static LOD1 mesh while it runs
   if (!nb.ready) return;
   nb.pt = on;
-  for (const m of [...nb.im.flat(), nb.imp]) m.visible = !on;
+  for (const m of nb.im.flat()) m.visible = !on;
+  nb.imp.visible = !on && nb.imp.geometry.instanceCount > 0;
   if (on){ const geos = nb.houses.map(h=>nb.lod1[h.mir].clone().applyMatrix4(h.m4)); nb.ptMesh = new THREE.Mesh(mergeGeometries(geos), nb.l1Mat); cityGroup.add(nb.ptMesh); }
   else if (nb.ptMesh){ cityGroup.remove(nb.ptMesh); nb.ptMesh.geometry.dispose(); nb.ptMesh = null; }
 }
@@ -2546,19 +2617,20 @@ const sphereGeo = new THREE.IcosahedronGeometry(1, 1);
 function hashStr(s){ let h=2166136261; for (const ch of s){ h^=ch.charCodeAt(0); h=Math.imul(h,16777619);} return (h>>>0)%2147483646+1; }
 
 /* ---------- procedural trees: branching skeleton + leaf / blossom cards that sway in the wind ---------- */
-const windU = { uTime:{value:0}, uWind:{value:.45} };
-function windify(material, amp, key){
+const windU = { uTime:{value:0}, uWind:{value:.45}, uAoOn:{value:0} };   // uAoOn: 1 only while the frame is drawn for the ambient-occlusion pass, which reads the alpha channel as "how much occlusion"; everywhere else alpha stays 1
+function windify(material, amp, key, ao=.3){ // `key` only labels the material; every wind material with the same features shares one shader program. ao: how much ambient occlusion it takes
+  const uAmp = {value:amp}, uAo = {value:ao}; material.userData.wind = key;
   material.onBeforeCompile = (sh)=>{
-    sh.uniforms.uTime = windU.uTime; sh.uniforms.uWind = windU.uWind;
-    sh.vertexShader = 'attribute float aTip;\nattribute float aPhase;\nuniform float uTime;\nuniform float uWind;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+    sh.uniforms.uTime = windU.uTime; sh.uniforms.uWind = windU.uWind; sh.uniforms.uAmp = uAmp; sh.uniforms.uAoMask = uAo; sh.uniforms.uAoOn = windU.uAoOn;
+    sh.vertexShader = 'attribute float aTip;\nattribute float aPhase;\nuniform float uTime;\nuniform float uWind;\nuniform float uAmp;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
       vec4 wpos = modelMatrix * vec4(transformed, 1.0);
       float gust = 0.5 + 0.3 * sin(uTime * 0.9 - wpos.x * 0.32 - wpos.z * 0.12) + 0.2 * sin(uTime * 0.37 + wpos.z * 0.05); // gusts travel across the garden
-      float sway = aTip * ${amp.toFixed(3)} * (0.2 + uWind * 1.8) * gust;
-      transformed.x += sway * (sin(uTime * 1.7 + wpos.x * 0.8 + wpos.z * 0.3 + aPhase) + 0.6);
-      transformed.z += sway * 0.55 * cos(uTime * 1.3 + wpos.x * 0.4 + wpos.z * 0.9 + aPhase);
-      transformed.y -= sway * 0.15;`);
+      float sway = aTip * uAmp * (0.2 + uWind * 1.8) * gust;
+      vec3 blown = vec3(sway * (sin(uTime * 1.7 + wpos.x * 0.8 + wpos.z * 0.3 + aPhase) + 0.6), -sway * 0.15, sway * 0.55 * cos(uTime * 1.3 + wpos.x * 0.4 + wpos.z * 0.9 + aPhase));
+      transformed += blown * mat3(modelMatrix);   // the wind blows in one direction for the whole garden, however a plant is turned (and whether it is drawn on its own or in a batch)`);
+    sh.fragmentShader = 'uniform float uAoMask;\nuniform float uAoOn;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  gl_FragColor.a = mix(1.0, uAoMask, uAoOn);   // leaves and grass take less ambient occlusion (read by the AO pass)');
   };
-  material.customProgramCacheKey = ()=>key;
+  material.customProgramCacheKey = ()=>'wind';
   return material;
 }
 const foliageTex = canvasTex(256,(g,s2)=>{ g.fillStyle='#8a8a8a'; g.fillRect(0,0,s2,s2); // dense small leaves, tinted per plant
@@ -2566,7 +2638,7 @@ const foliageTex = canvasTex(256,(g,s2)=>{ g.fillStyle='#8a8a8a'; g.fillRect(0,0
 foliageTex.repeat.set(3,2);
 const foliageMats = {};
 function foliageMat(kind, col){ const key = kind+col; if (!foliageMats[key]){ const m = M({color:new THREE.Color(col).multiplyScalar(kind==='aster'?.7:kind==='lavender'?1.6:1.25), map:foliageTex, bumpMap:foliageTex, bumpScale:3, roughness:.9}); m.map = foliageTex; foliageMats[key] = m; } return foliageMats[key]; }
-const clumpMat = windify(new THREE.MeshStandardMaterial({vertexColors:true, side:THREE.DoubleSide, roughness:.8}), .14, 'clump');
+const clumpMat = windify(new THREE.MeshStandardMaterial({vertexColors:true, side:THREE.DoubleSide, roughness:.8}), .14, 'clump', .7);
 const leafTexCache = {};
 function leafTexture(kind){
   if (leafTexCache[kind]) return leafTexCache[kind];
@@ -2913,7 +2985,8 @@ function buildObject(o){
     case 'sofa_in': case 'armchair': case 'coffee': case 'dining': case 'tvunit': case 'bed_in': case 'desk': case 'wardrobe': case 'island': case 'kunits': case 'shelf': case 'rug': case 'lamp': case 'plant_in': case 'boiler': case 'sofa_l': g.add(makeFurniture(o)); break;
     case 'art': case 'slats': case 'fshelf': case 'fdrawers': case 'curtain': case 'wallbox': case 'hood': case 'hshelf': case 'kitem': case 'pendant': case 'ceiling': case 'paint': case 'fridge': case 'chaise': case 'minifridge': case 'bowls': g.add(makeDeco(o)); break;
   }
-  g.traverse(m=>{ if (m.isMesh){ if (!g.userData.noShadow && m.material!==mat.glass && m.material!==mat.water && m.material!==mat.pond && m.material!==mat.zone) m.castShadow = m.castShadow!==false; m.receiveShadow = true; m.userData.objId = o.id; } else if (m.isLine) m.userData.objId = o.id; });
+  const flat = (o.type==='paving' && (p.h||0) < .07) || o.type==='rug';                    // ground covers a few centimetres high: their shadows are not worth a draw call each
+  g.traverse(m=>{ if (m.isMesh){ if (!g.userData.noShadow && m.material!==mat.glass && m.material!==mat.water && m.material!==mat.pond && m.material!==mat.zone) m.castShadow = m.castShadow!==false; if (flat && !m.isInstancedMesh) m.castShadow = false; m.receiveShadow = true; m.userData.objId = o.id; } else if (m.isLine) m.userData.objId = o.id; });
   g.userData.objId = o.id;
   return g;
 }
@@ -2921,18 +2994,28 @@ function fitUV(geo, w, d, texSize){ // world-scale UVs on a box top
   const uv = geo.attributes.uv; for (let i=0;i<uv.count;i++){ uv.setXY(i, uv.getX(i)*w/texSize, uv.getY(i)*d/texSize); } uv.needsUpdate = true;
 }
 const meshById = new Map();
-function visibleObj(o){ const T = TYPES[o.type]; if ((T?.furniture || T?.deco) && ui.layers.furniture===false) return false;
-  if (T?.small && !walk.on && ui.cut==='all') return false;   // small fittings are hidden under the roof unless you are inside or the house is cut open
+/* When is an object drawn? The layers decide whether it is shown at all (shownObj). Things inside the house also follow
+   the view (objRule / ruleVisible): small fittings only show when you are inside or the house is cut open, upper-floor
+   things go with the upper floor when it is cut away, and a ceiling panel goes when the floor above it is cut away,
+   so that the room can be seen from above. */
+function shownObj(o){ const T = TYPES[o.type]; if ((T?.furniture || T?.deco) && ui.layers.furniture===false) return false;
   return o.state==='proposed' ? ui.layers.proposed!==false : (o.type==='tree' ? ui.layers.trees!==false : ui.layers.existing!==false); }
+function objRule(o){ const T = TYPES[o.type]; return T?.indoor ? 1 | (T.small ? 2 : 0) | (o.p?.floor==='uf' ? 4 : 0) | (o.type==='ceiling' ? 8 : 0) : 0; }   // 1 indoors, 2 small, 4 upper floor, 8 ceiling
+function ruleVisible(r){
+  if ((r & 2) && !walk.on && ui.cut==='all') return false;
+  if ((r & 4) && ui.cut==='gf') return false;
+  if ((r & 8) && !walk.on && ui.cut===((r & 4) ? 'uf' : 'gf')) return false;
+  return true; }
+function visibleObj(o){ return shownObj(o) && ruleVisible(objRule(o)); }
 function objBase(o){ return (TYPES[o.type]?.indoor ? (o.p?.floor==='uf' ? 3.17 : 0) : levelAt(o.x, o.y)) + (o.dz||0); }   // indoor things stand on their floor
-function applySmall(){ for (const o of state.objects) if (TYPES[o.type]?.small){ const g = meshById.get(o.id); if (g) g.visible = visibleObj(o); } }
+function applySmall(){ for (const o of state.objects) if (objRule(o) > 1){ const g = meshById.get(o.id); if (g) g.visible = visibleObj(o); } }   // the things that follow the view
 function placeMesh(o){
   const g = meshById.get(o.id); if (!g) return;
   const base = objBase(o);
   g.position.set(o.x, base, o.y); g.rotation.y = (o.rot||0)*Math.PI/180;
   g.visible = visibleObj(o);
   if (NO_GRASS.has(o.type)) scheduleGrass();
-  reflDirty = true; shadowDirty = true;
+  reflDirty = true; shadowDirty = true; batches.dirty = true;
 }
 /* ---------- per-object colours: each recolourable part is named by its material ---------- */
 let partNames = null;
@@ -2978,7 +3061,75 @@ function applyColors(g, o){
 }
 function rebuildObject(o){
   const old = meshById.get(o.id); if (old){ objectsGroup.remove(old); old.traverse(m=>{ if (m.geometry && m.geometry!==sphereGeo) m.geometry.dispose(); }); }
-  const g = buildObject(o); applyColors(g, o); mergeMeshes(g); meshById.set(o.id, g); objectsGroup.add(g); placeMesh(o);
+  const g = buildObject(o); applyColors(g, o); mergeMeshes(g);
+  if (TYPES[o.type]?.indoor) g.traverse(m=>{ if (m.isMesh){ m.userData.cast = m.castShadow; m.castShadow = m.castShadow && indoorOpen; } });   // see applyIndoor
+  meshById.set(o.id, g); objectsGroup.add(g); placeMesh(o);
+}
+/* ---------- view-mode batching ----------
+   In view mode nothing is moved by hand, so the still meshes of all objects that share a material are drawn as one
+   mesh: a few hundred draw calls become a few dozen, in the picture and in the shadow map alike. The objects' own
+   meshes stay where they are for clicking; they only move to a layer that no camera draws. Things that follow the view
+   (objRule) are batched per rule, so walking into the house or cutting it open just shows or hides a batch.
+   Edit mode, and any object with moving parts, uses the objects themselves. */
+const batches = { root:new THREE.Group(), groups:new Map(), sources:[], on:false, dirty:true, built:0, ms:0 };
+scene.add(batches.root);
+function batchesOff(){
+  for (const m of batches.sources) m.layers.set(0); batches.sources.length = 0;
+  for (const grp of batches.groups.values()){ for (const m of grp.children) m.geometry.dispose(); batches.root.remove(grp); }
+  batches.groups.clear(); batches.on = false;
+}
+function buildBatches(){
+  const t0 = performance.now(); batchesOff();
+  const buckets = new Map(), stones = new Map();
+  for (const o of state.objects){ const g = meshById.get(o.id); if (!g || !shownObj(o)) continue;
+    if (g.userData.noBatch === undefined){ let mv = false; g.traverse(n=>{ if (n.userData.anim || n.userData.pileRoot || n.isSkinnedMesh) mv = true; }); g.userData.noBatch = mv; }
+    if (g.userData.noBatch) continue;
+    const rule = objRule(o); g.updateMatrixWorld(true);
+    g.traverse(m=>{ if (!m.isMesh || m.isSkinnedMesh || !m.visible || Array.isArray(m.material) || m.userData.keep) return;
+      const mt = m.material; if (mt.transparent || mt.visible === false) return;
+      for (let p = m.parent; p && p !== g; p = p.parent) if (!p.visible) return;
+      const cast = m.userData.cast ?? m.castShadow;
+      if (m.isInstancedMesh){ // scattered pebbles: one instanced mesh per kind of stone
+        if (m.instanceColor === null) return; const key = [rule, m.geometry.attributes.position.count, mt.type, mt.roughness, mt.color.getHex(), cast, m.receiveShadow].join('|');
+        let b = stones.get(key); if (!b){ b = {rule, list:[]}; stones.set(key, b); } b.list.push(m); return; }
+      const A = m.geometry.attributes; if (!A.position || Object.keys(m.geometry.morphAttributes).length) return;
+      const names = Object.keys(A).sort(); if (names.some(n=>A[n].isInterleavedBufferAttribute)) return;
+      const key = [rule, mt.uuid, m.customDepthMaterial ? m.customDepthMaterial.uuid : '', !!m.geometry.index, names.map(n=>n+A[n].itemSize+A[n].array.constructor.name+A[n].normalized).join(','), cast, m.receiveShadow, m.renderOrder].join('|');
+      let b = buckets.get(key); if (!b){ b = {rule, list:[]}; buckets.set(key, b); } b.list.push(m); });
+  }
+  const groupFor = rule=>{ let grp = batches.groups.get(rule); if (!grp){ grp = new THREE.Group(); grp.visible = ruleVisible(rule); batches.groups.set(rule, grp); batches.root.add(grp); } return grp; };
+  const finish = (mm, f, list, rule)=>{ mm.castShadow = f.castShadow; mm.receiveShadow = f.receiveShadow; mm.renderOrder = f.renderOrder; if (f.customDepthMaterial) mm.customDepthMaterial = f.customDepthMaterial;
+    if (f.userData.cast !== undefined) mm.userData.cast = f.userData.cast;
+    groupFor(rule).add(mm); for (const m of list){ m.layers.set(1); batches.sources.push(m); } };
+  for (const {rule, list} of buckets.values()){ if (list.length < 2) continue;
+    const geos = list.map(m=>{ const gg = m.geometry.clone(); gg.applyMatrix4(m.matrixWorld); if (m.matrixWorld.determinant() < 0) flipWinding(gg); gg.groups.length = 0; return gg; });
+    const merged = mergeGeometries(geos, false); for (const gg of geos) gg.dispose(); if (!merged) continue;
+    finish(new THREE.Mesh(merged, list[0].material), list[0], list, rule); }
+  const m4 = new THREE.Matrix4(), col = new THREE.Color();
+  for (const {rule, list} of stones.values()){ if (list.length < 2) continue;
+    const total = list.reduce((n, m)=>n + m.count, 0), im = new THREE.InstancedMesh(list[0].geometry.clone(), list[0].material, total); let k = 0;
+    for (const m of list) for (let i = 0; i < m.count; i++){ m.getMatrixAt(i, m4); m4.premultiply(m.matrixWorld); im.setMatrixAt(k, m4); m.getColorAt(i, col); im.setColorAt(k, col); k++; }
+    im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.computeBoundingSphere();
+    finish(im, list[0], list, rule); }
+  batches.on = true; batches.dirty = false; batches.built++; batches.ms = performance.now() - t0;
+}
+function updateBatches(){ // once a frame, before drawing
+  if (ui.edit || drag){ if (batches.on) batchesOff(); return; }
+  if (!batches.on || batches.dirty) buildBatches();
+  for (const [rule, grp] of batches.groups) grp.visible = ruleVisible(rule);
+}
+/* Things inside the house cast sun shadows only when that can be seen: walking inside, or with the house cut open.
+   From outside under the roof they are lit by the windows and their shadows fall where nobody looks; the car in the
+   closed garage is not drawn at all. */
+let indoorOpen = false;
+function houseOpen(){ return (walk.on && walk.inside) || ui.cut !== 'all' || ui.layers.roof === false; }
+function applyIndoor(force){
+  const open = houseOpen(); if (open === indoorOpen && !force) return; indoorOpen = open;
+  for (const o of state.objects){ if (!TYPES[o.type]?.indoor) continue; const g = meshById.get(o.id); if (!g) continue;
+    g.traverse(m=>{ if (m.isMesh && m.userData.cast !== undefined) m.castShadow = open && m.userData.cast; }); }
+  batches.root.traverse(m=>{ if (m.isMesh && m.userData.cast !== undefined) m.castShadow = open && m.userData.cast; });
+  for (const m of furniture) m.visible = ui.layers.furniture !== false && open;
+  shadowDirty = true;
 }
 function rebuildAll(){
   syncKinds(); if (typeof renderPlantGrid==='function') renderPlantGrid();
@@ -3081,7 +3232,7 @@ function showObjectInfo(o){
   roomCard.hidden = false; clearTimeout(roomCard._t); roomCard._t = setTimeout(()=>roomCard.hidden=true, 7000);
 }
 function setMode(m){
-  ui.edit = m==='edit';
+  ui.edit = m==='edit'; batches.dirty = true;
   document.getElementById('editToggle').checked = ui.edit;
   document.getElementById('undo').hidden = document.getElementById('redo').hidden = !ui.edit;
   const bt = document.querySelector('[data-tab=build]'); bt.hidden = !ui.edit;
@@ -3153,7 +3304,7 @@ function placeOrRebuild(o, placeOnly=false){
   if (TYPES[o.type].hole) buildTerrainAndPlace();
   refreshSelectionBox(); updateClearance(); scheduleSave();
 }
-function removeObj(id){ const o=getObj(id); if (!o) return; state.objects = state.objects.filter(q=>q.id!==id); const g=meshById.get(id); if (g){ objectsGroup.remove(g); meshById.delete(id); shadowDirty = reflDirty = true; if (NO_GRASS.has(o.type)) scheduleGrass(); } if (TYPES[o.type].hole) buildTerrainAndPlace(); select(null); pushHistory(); scheduleSave(); }
+function removeObj(id){ const o=getObj(id); if (!o) return; state.objects = state.objects.filter(q=>q.id!==id); const g=meshById.get(id); if (g){ objectsGroup.remove(g); meshById.delete(id); shadowDirty = reflDirty = true; batches.dirty = true; if (NO_GRASS.has(o.type)) scheduleGrass(); } if (TYPES[o.type].hole) buildTerrainAndPlace(); select(null); pushHistory(); scheduleSave(); }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fileDownload(name, blob){ // plain browser download, used when hosted outside claude.ai
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
@@ -3174,7 +3325,7 @@ function scheduleSave(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{ localS
 }
 
 /* ---------- pointer interaction ---------- */
-const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(); ray.layers.enable(1);   // also the objects' own meshes while a batch stands in for them (see batches)
 let drag = null, down = null;
 function setNDC(e){ const r=canvas.getBoundingClientRect(); ndc.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1); ray.setFromCamera(ndc, camera); }
 function pickObject(){
@@ -3423,6 +3574,7 @@ function setView(v){
   const room = v.startsWith('room:') ? v.slice(5) : null;
   ui.view = v; walk.on = (v==='walk' || !!room); document.getElementById('walkpad').hidden = !walk.on;
   if (!walk.on && walk.inside){ walk.inside = false; updateSun(); }
+  applyIndoor();
   if (document.body.classList.contains('walking') !== walk.on){ document.body.classList.toggle('walking', walk.on); renderBuild(); }
   document.getElementById('viewSel').value = v; fitSelect(document.getElementById('viewSel'));
   persp.fov = walk.on ? 70 : 45; persp.near = walk.on ? .05 : .2;                        // a wider eye and closer near plane inside
@@ -3433,7 +3585,7 @@ function setView(v){
     const asp = innerWidth/appH();                         // portrait phones: step back so the whole plot fits across
     if (v==='aerial' && asp < 1.2) persp.position.sub(controls.target).multiplyScalar(Math.min(2.2, Math.pow(1.3/asp, .65))).add(controls.target);
     controls.update(); setStatus(null); }
-  applySmall(); resize(); setControlsForView(); if (typeof buildComposer==='function' && composerReady) buildComposer();
+  applySmall(); resize(); setControlsForView(); if (typeof syncComposerCamera==='function') syncComposerCamera();
 }
 { const vs = document.getElementById('viewSel'); vs.onchange = ()=>{ setView(vs.value); vs.blur(); }; }
 document.getElementById('walkexit').onclick = ()=>setView('aerial');
@@ -3442,7 +3594,7 @@ document.querySelectorAll('[data-walk]').forEach(b=>{ const k = {f:'w', b:'s', l
 function updateWalk(dt){
   if (!walk.on) return;
   const inside = walk.zone!==0 || pip([walk.pos.x, walk.pos.z], GF_POLY);
-  if (inside !== walk.inside){ walk.inside = inside; updateSun(); }
+  if (inside !== walk.inside){ walk.inside = inside; updateSun(); applyIndoor(); }
   const sp = (inside ? 1.5 : 2.2)*dt*(walk.keys['shift']?2:1), fx = Math.cos(walk.yaw), fz = -Math.sin(walk.yaw);
   let mx = 0, mz = 0;
   if (walk.keys['w']||walk.keys['arrowup']){ mx += fx; mz += fz; }
@@ -3464,7 +3616,7 @@ function applyCut(){
   G.roof.visible = ui.cut==='all' && ui.layers.roof!==false;
   G.uf.visible = ui.cut!=='gf';
   G.pv.visible = ui.cut==='all' && ui.layers.pv===true;
-  shadowDirty = true; applySmall();
+  shadowDirty = true; applySmall(); applyIndoor();
   document.getElementById('cutSel').value = ui.cut; fitSelect(document.getElementById('cutSel'));
 }
 { const cs = document.getElementById('cutSel'); cs.onchange = ()=>{ ui.cut = cs.value; applyCut(); cs.blur(); }; }
@@ -3482,11 +3634,11 @@ function renderLayers(){
 }
 function applyLayers(){
   for (const [k,,d] of LAYERS) if (ui.layers[k]===undefined) ui.layers[k]=d;
-  for (const m of furniture) m.visible = ui.layers.furniture;
+  applyIndoor(true);
   fences.visible = ui.layers.fence; plotLineGroup.visible = ui.layers.plot; sky.visible = clouds.visible = ui.layers.sky;
   statsEl.hidden = !ui.layers.stats; cityGroup.visible = ui.layers.city !== false;
-  for (const o of state.objects) placeMesh(o);
-  buildTerrainAndPlace(); applyCut();
+  if (initDone){ for (const o of state.objects) placeMesh(o); buildTerrainAndPlace(); }   // at start-up rebuildAll() does both right after
+  applyCut();
   if (autoArmed) setSeason(ui.season, true);   // the weather switch
 }
 try{ Object.assign(ui.layers, JSON.parse(localStorage.getItem(STORE_KEY+'-layers')||'{}')); }catch(e){}
@@ -3539,7 +3691,7 @@ function updateLabels(){
     let el = labelPool[i]; if (!el){ el=document.createElement('div'); labelsEl.appendChild(el); labelPool.push(el); }
     const cls = 'lab'+(it.cls?' '+it.cls:''); if (el.className!==cls) el.className = cls;
     if (it.html){ if (el._h!==it.html){ el.innerHTML = it.html; el._h=it.html; } } else if (el._h!==it.text){ el.textContent = it.text; el._h=it.text; }
-    el.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) translate(-50%,-50%)`; if (el.hidden) el.hidden=false; i++;
+    const tf = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) translate(-50%,-50%)`; if (el._tf !== tf){ el.style.transform = tf; el._tf = tf; } if (el.hidden) el.hidden=false; i++;
   }
   for (;i<labelPool.length;i++) if (!labelPool[i].hidden) labelPool[i].hidden = true;
 }
@@ -3724,7 +3876,7 @@ document.querySelectorAll('[role=tab]').forEach(t=>t.onclick=()=>{ document.quer
   new MutationObserver(sync).observe(panel, {attributes:true, attributeFilter:['class']});
   if (innerWidth<=760) panel.classList.add('collapsed');
   sync(); }
-function setStatus(t){ const st = document.getElementById('status'), before = st.textContent; setStatusText(st, t); if (st.textContent !== before){ st.classList.remove('flash'); void st.offsetWidth; st.classList.add('flash'); } }
+function setStatus(t){ const st = document.getElementById('status'), before = st.textContent; setStatusText(st, t); if (initDone && st.textContent !== before){ st.classList.remove('flash'); void st.offsetWidth; st.classList.add('flash'); } }
 function setStatusText(st, t){ st.textContent = t || (walk.on ? (walk.room ? roomName(walk.room)+' · ' : '') + walkHelp() : ui.edit ? 'Edit mode · click to select, drag to move · right-click for properties · Q / E rotate · Delete removes' : 'View mode · drag to orbit · click the lawn to throw a ball for the dog · click anything for details'); }
 
 /* ---------- data tab ---------- */
@@ -3949,7 +4101,7 @@ new ResizeObserver(syncBar).observe(barEl); addEventListener('resize', syncBar);
 
 /* ================= HIGH-FIDELITY RENDERING ================= */
 const QUALITY = {
-  standard:{shadow:2048, ao:false, bloom:false, smaa:false, grass:16, leaves:.45, reflect:false, tx:false, pr:1.25},
+  standard:{shadow:2048, ao:false, bloom:false, smaa:false, grass:16, leaves:.45, reflect:false, tx:false, pr:1.5},
   high:    {shadow:4096, ao:true,  bloom:false, smaa:true,  grass:34, leaves:.85, reflect:true,  tx:false, pebbles:true, pr:1.5},
   ultra:   {shadow:4096, ao:true,  bloom:true,  smaa:true,  grass:52, leaves:1.25,reflect:true,  tx:true,  pebbles:true, pr:2}
 };
@@ -3974,35 +4126,48 @@ envScene.add(new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), envSkyMat));
 const envGround = new THREE.Mesh(new THREE.CircleGeometry(95, 32), new THREE.MeshBasicMaterial({color:0x56603f}));
 envGround.rotation.x = -Math.PI/2; envGround.position.y = -3; envScene.add(envGround);
 let envRT = null, envDirty = true, lastEnv = 0;
+const envCubeRT = new THREE.WebGLCubeRenderTarget(256, {type:THREE.HalfFloatType}), envCubeCam = new THREE.CubeCamera(.1, 400, envCubeRT), _envMix = new THREE.Color(.75,.78,.8);
 function updateEnv(){ const U=sky.material.uniforms, E=envSkyMat.uniforms;
-  E.top.value.copy(U.top.value).lerp(new THREE.Color(.75,.78,.8), .45).multiplyScalar(.55); E.horizon.value.copy(U.horizon.value).multiplyScalar(.6); E.sunDir.value.copy(U.sunDir.value); E.sunCol.value.copy(U.sunCol.value).multiplyScalar(.6);
-  const old = envRT; envRT = pmrem.fromScene(envScene, 0, .1, 400); if (!photo) scene.environment = envRT.texture; old?.dispose(); envDirty = false; lastEnv = performance.now(); }
+  E.top.value.copy(U.top.value).lerp(_envMix, .45).multiplyScalar(.55); E.horizon.value.copy(U.horizon.value).multiplyScalar(.6); E.sunDir.value.copy(U.sunDir.value); E.sunCol.value.copy(U.sunCol.value).multiplyScalar(.6);
+  // the sky is drawn into a cube map and prefiltered into the same target every time: nothing is allocated or compiled per update
+  envCubeCam.update(renderer, envScene); envRT = pmrem.fromCubemap(envCubeRT.texture, envRT);
+  if (!photo && scene.environment !== envRT.texture) scene.environment = envRT.texture; envDirty = false; lastEnv = performance.now(); }
 
 /* live reflections of the garden for glass and water */
 const reflectRT = new THREE.WebGLCubeRenderTarget(256, {type:THREE.HalfFloatType});
 const cubeCam = new THREE.CubeCamera(.3, 4000, reflectRT); cubeCam.position.set(-3.5, 1.7, 4.5); scene.add(cubeCam);
-let reflDirty = true, lastRefl = 0;
-function updateReflections(){
-  const hidden=[]; scene.traverse(m=>{ if (m.isMesh && m.visible && m.material && m.material.envMap===reflectRT.texture){ m.visible=false; hidden.push(m); } });
+let reflDirty = true, lastRefl = 0, reflReady = false, reflFace = -1;
+cubeCam.coordinateSystem = renderer.coordinateSystem; cubeCam.updateCoordinateSystem();
+function stepReflections(){ // one side of the cube per frame: six short steps instead of one long stall; the new picture is taken into use when all six are drawn
+  if (reflFace < 0){ reflFace = 0; reflDirty = false; }                    // anything that changes from here on starts another round
+  const hidden=[]; scene.traverse(m=>{ if (m.isMesh && m.visible && m.material && m.material.userData?.reflects){ m.visible=false; hidden.push(m); } });
   for (const o of [grassGroup, dogGroup, catGroup, swimmer, ball, flyLeaves, flakes]) if (o.visible){ o.visible=false; hidden.push(o); }   // too small or too fleeting to show in a reflection
   const sp = sky.position.clone(), sb = selBox.visible; sky.position.copy(cubeCam.position); selBox.visible=false;
-  cubeCam.update(renderer, scene); reflectRT.texture.needsPMREMUpdate = true;
-  sky.position.copy(sp); selBox.visible=sb; hidden.forEach(m=>m.visible=true); reflDirty=false; lastRefl=performance.now();
+  const prev = renderer.getRenderTarget(), face = renderer.getActiveCubeFace(), mip = renderer.getActiveMipmapLevel();
+  renderer.setRenderTarget(reflectRT, reflFace); renderer.render(scene, cubeCam.children[reflFace]); renderer.setRenderTarget(prev, face, mip);
+  sky.position.copy(sp); selBox.visible=sb; hidden.forEach(m=>m.visible=true);
+  if (++reflFace < 6) return;
+  reflFace = -1; reflectRT.texture.needsPMREMUpdate = true; lastRefl = performance.now();
+  if (!reflReady){ reflReady = true; if (mat.glass.userData.reflects) mat.glass.envMap = reflectRT.texture; }   // until now the glass reflected the sky
 }
 /* procedural ripple normal map (tileable) */
 const waterNormal = (()=>{ const N=256, c=document.createElement('canvas'); c.width=c.height=N; const g=c.getContext('2d'), img=g.createImageData(N,N);
   const W=[[3,1,.5],[1,4,.42],[5,3,.25],[7,-2,.18],[-4,6,.15],[11,5,.08],[2,-9,.08],[13,-7,.05]];
-  const Hh=(x,y)=>{ let h=0; for (const [a,b,amp] of W) h+=amp*Math.sin(2*Math.PI*(a*x+b*y)/N + a*1.7); return h; };
+  const HH = new Float32Array(N*N), k2 = 2*Math.PI/N;
+  for (let y=0;y<N;y++) for (let x=0;x<N;x++){ let h=0; for (const [a,b,amp] of W) h+=amp*Math.sin(k2*(a*x+b*y) + a*1.7); HH[y*N+x] = h; }
+  const Hh=(x,y)=>HH[((y+N)%N)*N + (x+N)%N];                                  // the waves tile, so the heights wrap
   for (let y=0;y<N;y++) for (let x=0;x<N;x++){ const dx=Hh(x+1,y)-Hh(x-1,y), dy=Hh(x,y+1)-Hh(x,y-1); const nx=-dx*3, ny=-dy*3, l=Math.hypot(nx,ny,1), i=(y*N+x)*4;
     img.data[i]=(nx/l*.5+.5)*255; img.data[i+1]=(ny/l*.5+.5)*255; img.data[i+2]=(1/l*.5+.5)*255; img.data[i+3]=255; }
   g.putImageData(img,0,0); const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(.5,.5); return t; })();
 // level 2 (Ultra) refracts through real transmission, which costs a second render of the whole scene every frame;
 // level 1 (High) is blended glass and water with live reflections, level 0 (Standard) the plain version
-function makeGlass(level){ return level===2
-  ? new THREE.MeshPhysicalMaterial({color:0xffffff, metalness:0, roughness:.02, transmission:1, thickness:.02, ior:1.52, attenuationColor:new THREE.Color(0xbcd0d4), attenuationDistance:.8, envMap:reflectRT.texture, envMapIntensity:1.6, side:THREE.DoubleSide})
+function makeGlass(level){ const env = reflReady ? reflectRT.texture : null;   // the sky until the first reflection of the garden has been drawn
+  const m = level===2
+  ? new THREE.MeshPhysicalMaterial({color:0xffffff, metalness:0, roughness:.02, transmission:1, thickness:.02, ior:1.52, attenuationColor:new THREE.Color(0xbcd0d4), attenuationDistance:.8, envMap:env, envMapIntensity:1.6, side:THREE.DoubleSide})
   : level===1
-  ? new THREE.MeshPhysicalMaterial({color:0x6f8c99, metalness:.2, roughness:.03, ior:1.52, specularIntensity:1, transparent:true, opacity:.5, envMap:reflectRT.texture, envMapIntensity:1.9, side:THREE.DoubleSide, depthWrite:false})
-  : new THREE.MeshStandardMaterial({color:0x5d7d8f, roughness:.06, metalness:.55, transparent:true, opacity:.45, depthWrite:false}); }
+  ? new THREE.MeshPhysicalMaterial({color:0x6f8c99, metalness:.2, roughness:.03, ior:1.52, specularIntensity:1, transparent:true, opacity:.5, envMap:env, envMapIntensity:1.9, side:THREE.DoubleSide, depthWrite:false, forceSinglePass:true})
+  : new THREE.MeshStandardMaterial({color:0x5d7d8f, roughness:.06, metalness:.55, transparent:true, opacity:.45, depthWrite:false});
+  m.userData.reflects = level > 0; return m; }
 function makeWater(level, pond){ const att = pond ? 0x46613d : 0x1aa0c6;
   return level===2
   ? new THREE.MeshPhysicalMaterial({color:0xffffff, metalness:0, roughness:.015, transmission:1, thickness:1.2, ior:1.333, attenuationColor:new THREE.Color(att), attenuationDistance:pond?.45:1.6, normalMap:waterNormal, normalScale:new THREE.Vector2(.3,.3), envMapIntensity:1.6}) // water reflects the sky (scene environment)
@@ -4035,8 +4200,8 @@ function buildGrass(){
   const patch = (x,y)=>THREE.MathUtils.clamp(.5 + .22*Math.sin(x*.33+1.3)*Math.sin(y*.29+.7) + .14*Math.sin(x*1.07+y*.83) + .08*Math.sin(x*2.3-y*1.7), 0, 1);
   const tmp=new THREE.Color(), F=[0,.36,.7,1], WF=[1,.82,.5];
   let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9; for (const [x,y] of PLOT){ minX=Math.min(minX,x); maxX=Math.max(maxX,x); minY=Math.min(minY,y); maxY=Math.max(maxY,y); }
-  // blades are grouped in 6 m tiles so the parts of the lawn outside the view are skipped (frustum culling)
-  const TILE = 6, tiles = new Map();
+  // blades are grouped in 10 m tiles so the parts of the lawn outside the view are skipped (frustum culling)
+  const TILE = 10, tiles = new Map();
   for (let gx=minX; gx<maxX; gx+=sp) for (let gy=minY; gy<maxY; gy+=sp){
     const x=gx+(r()-.5)*sp, y=gy+(r()-.5)*sp;
     if (!pip([x,y], PLOT)) continue;
@@ -4075,20 +4240,57 @@ function buildGrass(){
 }
 
 /* post-processing: ambient occlusion, bloom, anti-aliasing */
-let composer = null, composerReady = false, aoPass = null, bloomPass = null;
+const AO_DEPTH = !/[?&#]ao=geo\b/.test(location.href);
+let composer = null, composerReady = false, aoPass = null, bloomPass = null, renderPass = null, smaaPass = null, postReady = true, postGen = 0, started = false;
+function syncComposerCamera(){ if (renderPass) renderPass.camera = camera; if (aoPass) aoPass.camera = camera; }   // the passes follow the active camera
 function buildComposer(){
-  if (composer){ for (const p of composer.passes) p.dispose?.(); composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); composer = null; }
-  const q = Q(); composerReady = true; aoPass = bloomPass = null;
+  if (composer){ for (const p of composer.passes){ p.dispose?.(); p.mixMaterial?.dispose(); p.nrmMaterial?.dispose(); } composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); composer = null; }
+  const q = Q(); composerReady = true; aoPass = bloomPass = renderPass = smaaPass = null; postGen++; postReady = true;
   if (!q.ao && !q.bloom && !q.smaa) return;
   const w = innerWidth, h = appH();
   composer = new EffectComposer(renderer);
-  composer.addPass(new RenderPass(scene, camera));
+  composer.addPass(renderPass = new RenderPass(scene, camera));
   if (q.ao){
     const ao = new GTAOPass(scene, camera, w, h); ao.blendIntensity = .9; aoPass = ao;
     ao.updateGtaoMaterial({radius:.45, distanceExponent:1.4, thickness:1.2, scale:1, samples:12, distanceFallOff:1, screenSpaceRadius:false});
     const aoSize = ao.setSize.bind(ao); ao.setSize = (w2, h2)=>aoSize(Math.max(1, Math.round(w2/2)), Math.max(1, Math.round(h2/2)));   // AO is soft: half resolution is plenty
     const base = ao.render.bind(ao);
-    ao.render = (...args)=>{ // leave out the sky, clouds and cut-out foliage, which the AO pass would draw as solid quads
+    if (AO_DEPTH){ // the occlusion is worked out from the depth of the picture just drawn (surface directions are rebuilt from it): no second drawing of the scene
+      ao._renderGBuffer = false;
+      ao.normalRenderTarget.dispose(); ao.normalRenderTarget = new THREE.WebGLRenderTarget(1, 1, {minFilter:THREE.NearestFilter, magFilter:THREE.NearestFilter, type:THREE.HalfFloatType, depthBuffer:false});
+      for (const m of [ao.gtaoMaterial, ao.pdMaterial]) m.uniforms.tNormal.value = ao.normalRenderTarget.texture;
+      for (const rt of [composer.renderTarget1, composer.renderTarget2]) rt.depthTexture = new THREE.DepthTexture(1, 1);
+      const nrm = ao.nrmMaterial = new THREE.ShaderMaterial({ depthTest:false, depthWrite:false, blending:THREE.NoBlending, uniforms:{tDepth:{value:null}, cameraProjectionMatrixInverse:{value:new THREE.Matrix4()}}, vertexShader:fsVert,
+        fragmentShader:`uniform highp sampler2D tDepth; uniform mat4 cameraProjectionMatrixInverse; varying vec2 vUv;
+          vec3 viewPos(vec2 uv, float d){ vec4 v = cameraProjectionMatrixInverse * vec4(vec3(uv, d) * 2.0 - 1.0, 1.0); return v.xyz / v.w; }
+          void main(){ // the direction each surface faces, from the slope of the depth around it (the smoother side of every edge is used)
+            vec2 size = vec2(textureSize(tDepth, 0)); ivec2 p = ivec2(vUv * size);
+            float c0 = texelFetch(tDepth, p, 0).x; if (c0 >= 1.0){ gl_FragColor = vec4(0.5, 0.5, 1.0, 1.0); return; }
+            float l2 = texelFetch(tDepth, p - ivec2(2, 0), 0).x, l1 = texelFetch(tDepth, p - ivec2(1, 0), 0).x, r1 = texelFetch(tDepth, p + ivec2(1, 0), 0).x, r2 = texelFetch(tDepth, p + ivec2(2, 0), 0).x;
+            float b2 = texelFetch(tDepth, p - ivec2(0, 2), 0).x, b1 = texelFetch(tDepth, p - ivec2(0, 1), 0).x, t1 = texelFetch(tDepth, p + ivec2(0, 1), 0).x, t2 = texelFetch(tDepth, p + ivec2(0, 2), 0).x;
+            float dl = abs((2.0 * l1 - l2) - c0), dr = abs((2.0 * r1 - r2) - c0), db = abs((2.0 * b1 - b2) - c0), dt = abs((2.0 * t1 - t2) - c0);
+            vec3 ce = viewPos(vUv, c0);
+            vec3 dpdx = (dl < dr) ? ce - viewPos(vUv - vec2(1.0 / size.x, 0.0), l1) : viewPos(vUv + vec2(1.0 / size.x, 0.0), r1) - ce;
+            vec3 dpdy = (db < dt) ? ce - viewPos(vUv - vec2(0.0, 1.0 / size.y), b1) : viewPos(vUv + vec2(0.0, 1.0 / size.y), t1) - ce;
+            gl_FragColor = vec4(normalize(cross(dpdx, dpdy)) * 0.5 + 0.5, 1.0); }` });
+      // one pass lays the occlusion over the picture; leaves and grass mark themselves in the alpha channel and take less of it (see windify)
+      const mix = ao.mixMaterial = new THREE.ShaderMaterial({ depthTest:false, depthWrite:false, blending:THREE.NoBlending, vertexShader:fsVert,
+        uniforms:{tDiffuse:{value:null}, tAO:{value:null}, tDepth:{value:null}, intensity:{value:1}, cameraNear:{value:.2}, cameraFar:{value:4000}, persp:{value:1}},
+        fragmentShader:`uniform sampler2D tDiffuse; uniform sampler2D tAO; uniform highp sampler2D tDepth; uniform float intensity; uniform float cameraNear; uniform float cameraFar; uniform float persp; varying vec2 vUv;
+          #include <packing>
+          void main(){ vec4 c = texture2D(tDiffuse, vUv);
+            float dist = persp > 0.5 ? -perspectiveDepthToViewZ(texture2D(tDepth, vUv).x, cameraNear, cameraFar) : 0.0;   // far away the occlusion is smaller than a pixel: it fades out there
+            gl_FragColor = vec4(c.rgb * mix(1.0, texture2D(tAO, vUv).r, intensity * c.a * (1.0 - smoothstep(70.0, 150.0, dist))), 1.0); }` });
+      ao.render = (r, writeBuffer, readBuffer)=>{ const cam = ao.camera, d = readBuffer.depthTexture, G = ao.gtaoMaterial.uniforms, D = ao.pdMaterial.uniforms;
+        nrm.uniforms.tDepth.value = d; nrm.uniforms.cameraProjectionMatrixInverse.value.copy(cam.projectionMatrixInverse); ao.renderPass(r, nrm, ao.normalRenderTarget);
+        G.tDepth.value = d; D.tDepth.value = d; G.cameraNear.value = cam.near; G.cameraFar.value = cam.far;
+        G.cameraProjectionMatrix.value.copy(cam.projectionMatrix); G.cameraProjectionMatrixInverse.value.copy(cam.projectionMatrixInverse); G.cameraWorldMatrix.value.copy(cam.matrixWorld);
+        ao.renderPass(r, ao.gtaoMaterial, ao.gtaoRenderTarget, 0xffffff, 1.0);
+        D.cameraProjectionMatrixInverse.value.copy(cam.projectionMatrixInverse);
+        ao.renderPass(r, ao.pdMaterial, ao.pdRenderTarget, 0xffffff, 1.0);
+        const U = mix.uniforms; U.tDiffuse.value = readBuffer.texture; U.tAO.value = ao.pdRenderTarget.texture; U.tDepth.value = d; U.intensity.value = ao.blendIntensity; U.cameraNear.value = cam.near; U.cameraFar.value = cam.far; U.persp.value = cam.isPerspectiveCamera ? 1 : 0;
+        ao.renderPass(r, mix, ao.renderToScreen ? null : writeBuffer); };
+    } else ao.render = (...args)=>{ // geometry pre-pass (?ao=geo): leave out the sky, clouds and cut-out foliage, which it would draw as solid quads
       const v=[sky.visible, clouds.visible, grassGroup.visible]; sky.visible=clouds.visible=grassGroup.visible=false;
       const leaves=[]; objectsGroup.traverse(m=>{ if (m.isMesh && m.visible && m.material.alphaTest>0){ m.visible=false; leaves.push(m); } });
       for (const m of cityGroup.children) if (m.userData.noAO && m.visible){ m.visible=false; leaves.push(m); }
@@ -4097,8 +4299,10 @@ function buildComposer(){
   }
   if (q.bloom){ bloomPass = new UnrealBloomPass(new THREE.Vector2(w,h), .14, .35, .95); composer.addPass(bloomPass); }
   composer.addPass(new OutputPass());
-  if (q.smaa){ const pr=renderer.getPixelRatio(); composer.addPass(new SMAAPass(w*pr, h*pr)); }
+  if (q.smaa){ const pr=renderer.getPixelRatio(); composer.addPass(smaaPass = new SMAAPass(w*pr, h*pr)); }
   composer.setSize(w, h);
+  postReady = false; for (const p of [aoPass, bloomPass, smaaPass]) if (p) p.enabled = false;   // on again once their shaders are compiled (warmPost)
+  if (started) warmPost();
 }
 function applyQuality(){
   const q = Q();
@@ -4109,8 +4313,7 @@ function applyQuality(){
   scene.traverse(m=>{ if (m.isMesh && swap.has(m.material)) m.material = swap.get(m.material); });
   for (const old of swap.keys()) old.dispose();
   [mat.glass, mat.water, mat.pond] = [...swap.values()];
-  if (!q.reflect) for (const m of [mat.glass, mat.water, mat.pond]){ m.envMap = null; m.needsUpdate = true; }
-  for (const o of state.objects) if (o.type==='tree') rebuildObject(o);
+  if (initDone) for (const o of state.objects) if (o.type==='tree') rebuildObject(o);   // leaf density follows the quality; at start-up the trees were just built with it
   resize(); buildComposer(); scheduleGrass(0); reflDirty = true;
   document.querySelectorAll('[data-q]').forEach(b=>b.setAttribute('aria-pressed', b.dataset.q===qName));
 }
@@ -4139,6 +4342,7 @@ function photoCommon(){ controls.enabled = false; labelsEl.hidden = true; photoB
 function startPhoto(){
   if (photo){ stopPhoto(); return; }
   if (camera!==persp){ setStatus('Photo works in the 3D views. Switch to Aerial, Garden, Street or Walk first.'); return; }
+  postReady = true; if (aoPass){ aoPass.enabled = true; aoPass.blendIntensity = .9; aoFade = 1; } if (bloomPass) bloomPass.enabled = true; if (smaaPass) smaaPass.enabled = true;   // the whole chain, even if it has to compile now
   // render at up to 2× device pixels with a sharp 4K shadow map while the photo is up
   setRenderScale(1); const prevPR = renderer.getPixelRatio(); renderer.setPixelRatio(Math.min(2, Math.max(prevPR, devicePixelRatio)));
   const prevShadow = sun.shadow.mapSize.x; if (prevShadow < 4096){ sun.shadow.mapSize.set(4096,4096); sun.shadow.map?.dispose(); sun.shadow.map = null; }
@@ -4176,6 +4380,7 @@ async function startPathTrace(){
   if (!THREE.Scene.prototype.backgroundRotation){ THREE.Scene.prototype.backgroundRotation = new THREE.Euler(); THREE.Scene.prototype.environmentRotation = new THREE.Euler(); }
   let PT; try { PT = await import('three-gpu-pathtracer'); } catch(e){ photoBtn.setAttribute('aria-pressed','false'); setStatus('The path tracer could not load: '+e.message); return; }
   setStatus('Preparing the scene for path tracing…'); await new Promise(r=>setTimeout(r,40));
+  batchesOff(); batches.dirty = true;                               // the path tracer reads every mesh in the scene: the objects themselves, not their stand-ins
   // grass blades and clouds are left out: millions of thin triangles only add noise here
   const hidden = [sky, clouds, selBox, plotLineGroup, measureGroup, grassGroup, fences].filter(o=>o.visible); hidden.forEach(o=>o.visible=false);
   const env = new PT.GradientEquirectTexture(512);
@@ -4951,14 +5156,15 @@ function updateFall(dt, now){
 
 function renderFrame(){
   if (photo){ if (photo.kind==='pt') photo.pt.renderSample(); else accumStep(); return; }
-  if (composer) composer.render(); else renderer.render(scene, camera);
+  if (composer){ windU.uAoOn.value = (aoPass && aoPass.enabled && aoPass.mixMaterial) ? 1 : 0; composer.render(); windU.uAoOn.value = 0; }   // the occlusion share travels in the alpha channel only when the pass that reads it runs
+  else renderer.render(scene, camera);
 }
 
 /* ---------- frame budget ----------
-   While the view is moving (orbit, pan, zoom, walk, dragging an object) the frame skips the costly extras:
-   ambient occlusion and bloom pause and fade back in once the camera rests, and the sun's shadow map is
-   redrawn at most ~15×/s for the animals. At rest, shadows follow the animals every frame and are otherwise
-   only redrawn when something changes. */
+   The sun's shadow map of the still scene is kept and only redrawn when something in it changes; the animals'
+   shadows are patched into it every frame (see shadowSplit). Where frames are slow while the view is moving
+   (orbit, pan, zoom, walk, dragging an object), those frames are drawn at a lower resolution and ambient
+   occlusion and bloom pause; both come back as soon as the camera rests. */
 let lastInteract = -1e9, lastRelease = -1e9, shadowSig = -1, aoFade = 1, controlsActive = false, prevZoom = 1;
 const prevCamPos = new THREE.Vector3(), prevCamQ = new THREE.Quaternion();
 for (const c of [controls, ocontrols]){
@@ -4977,9 +5183,58 @@ function trackMotion(now){
 function scheduleShadows(now, moving){
   const sig = (dogGroup.visible?1:0) | (catGroup.visible?2:0) | (swimmer.visible?4:0) | (ball.visible?8:0) | (snowmanDeco.visible?16:0) | (fallDeco.visible?32:0);
   if (sig !== shadowSig){ shadowSig = sig; shadowDirty = true; }
-  const pets = (sig & 15) || pileSquash.size;
-  const every = pets ? (moving ? 66 : 0) : ladies.size ? (moving ? 250 : 120) : 1000;   // the lady barely moves; 1 s is a safety net for anything not flagged
-  if (shadowDirty || now - lastShadow >= every){ renderer.shadowMap.needsUpdate = true; shadowDirty = false; lastShadow = now; }
+  const S = shadowSplit;
+  if (!S.on){ // the whole map every time (no WebGL 2, or ?shadow=full)
+    const pets = (sig & 15) || pileSquash.size;
+    const every = pets ? (moving ? 66 : 0) : ladies.size ? (moving ? 250 : 120) : 1000;   // the lady barely moves; 1 s is a safety net for anything not flagged
+    if (shadowDirty || now - lastShadow >= every){ renderer.shadowMap.needsUpdate = true; shadowDirty = false; lastShadow = now; }
+    return; }
+  if (pileSquash.size) shadowDirty = true;                                               // the leaf pile being flattened belongs to the still picture
+  if (shadowDirty || (!moving && now - lastShadow >= 2000)){ S.staticDirty = true; shadowDirty = false; lastShadow = now; }   // 2 s: a safety net for anything not flagged
+  if (S.staticDirty || (sig & 15)) renderer.shadowMap.needsUpdate = true;                 // the movers are cheap: every frame
+}
+/* ---------- sun shadows: a kept map of everything that stands still, with the movers drawn on top ----------
+   Redrawing the whole shadow map whenever the dog takes a step costs about as much as drawing the scene again.
+   The map of the still scene is kept in a second target instead. When only the movers (dog, cat, swimmer, ball)
+   have changed, the patches they covered are copied back from it and the movers are drawn again. */
+const shadowSplit = { on: renderer.capabilities.isWebGL2 && !/[?&#]shadow=full\b/.test(location.href), cache:null, staticDirty:true, rects:[], dyn:new THREE.Object3D(), full:0, part:0, probe:3 };
+{ const S = shadowSplit, sm = renderer.shadowMap, renderAll = sm.render, clearAll = renderer.clear, _c = new THREE.Vector3();
+  const fb = rt=>renderer.properties.get(rt).__webglFramebuffer;
+  const M = [[dogGroup, 1.7, .4], [catGroup, 1.1, .2], [swimmer, 2.3, 0], [poolFloat, 2.1, 0], [ball, .45, 0]], movers = ()=>M;   // [root, radius, centre height]; the lady's slight stirring is part of the still picture (refreshed every 2 s)
+  const copy = (from, to, rects)=>{ // colour (the packed depth the shaders read) and the depth buffer, patch by patch
+    const gl = renderer.getContext(), st = renderer.state;
+    st.buffers.color.setMask(true); st.buffers.depth.setMask(true);
+    const probe = S.probe > 0 && rects.length > 0; if (probe) while (gl.getError() !== gl.NO_ERROR);   // the first few copies are checked: a graphics driver that refuses them gets the plain full redraw instead
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fb(from));        // `to` is the draw target three has just bound; the read binding is set here directly (three's own record of it goes stale whenever it binds both at once)
+    for (const r of rects) gl.blitFramebuffer(r[0], r[1], r[2], r[3], r[0], r[1], r[2], r[3], gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fb(to));          // back in step with the draw target
+    if (probe){ S.probe--; if (gl.getError() !== gl.NO_ERROR){ S.on = false; S.probe = 0; shadowDirty = true; console.warn('shadow patching is not available here; shadows are redrawn in full'); } } };
+  const restore = ()=>{ // called in place of clearing the map: put back what the movers covered, then note where they are now
+    const map = sun.shadow.map, cam = sun.shadow.camera, W = map.width, H = map.height;
+    copy(S.cache, map, S.rects); S.rects.length = 0;
+    const k = W/(cam.right - cam.left);
+    for (const [g, r, up] of movers()){ if (!g.visible) continue;
+      _c.setFromMatrixPosition(g.matrixWorld); _c.y += up; _c.applyMatrix4(cam.matrixWorldInverse).applyMatrix4(cam.projectionMatrix);
+      const x = (_c.x*.5 + .5)*W, y = (_c.y*.5 + .5)*H, e = r*k + 3;
+      const x0 = Math.max(0, Math.floor(x - e)), y0 = Math.max(0, Math.floor(y - e)), x1 = Math.min(W, Math.ceil(x + e)), y1 = Math.min(H, Math.ceil(y + e));
+      if (x1 > x0 && y1 > y0) S.rects.push([x0, y0, x1, y1]); } };
+  sm.render = function(lights, scn, cam){
+    if (!sm.enabled || (!sm.autoUpdate && !sm.needsUpdate) || !lights.length) return;
+    if (!S.on || scn !== scene || photo || lights.length !== 1 || lights[0] !== sun){ S.staticDirty = true; return renderAll.call(this, lights, scn, cam); }
+    const shadow = sun.shadow;
+    if (S.staticDirty || !shadow.map || !S.cache || S.cache.width !== shadow.map.width){
+      const vis = M.map(e=>e[0].visible); for (const e of M) e[0].visible = false;             // the still scene on its own
+      try { renderAll.call(this, lights, scn, cam); } finally { M.forEach((e, i)=>{ e[0].visible = vis[i]; }); }
+      const map = shadow.map, prev = renderer.getRenderTarget(), face = renderer.getActiveCubeFace(), mip = renderer.getActiveMipmapLevel();
+      if (!S.cache || S.cache.width !== map.width || S.cache.height !== map.height){ S.cache?.dispose(); S.cache = new THREE.WebGLRenderTarget(map.width, map.height, {minFilter:THREE.NearestFilter, magFilter:THREE.NearestFilter}); }
+      renderer.setRenderTarget(S.cache); copy(map, S.cache, [[0, 0, map.width, map.height]]); renderer.setRenderTarget(prev, face, mip);
+      S.staticDirty = false; S.rects.length = 0; S.full++; sm.needsUpdate = true;
+    }
+    S.dyn.children = M.map(e=>e[0]);                                                             // drawn through a stand-in parent: only the movers are walked
+    renderer.clear = restore;
+    try { renderAll.call(this, lights, S.dyn, cam); } finally { renderer.clear = clearAll; }
+    S.part++;
+  };
 }
 function scheduleResolution(moving, frameMs){
   if (!moving){ dyn.n = 0; if (dyn.scale < 1) setRenderScale(1); return; }
@@ -4989,16 +5244,19 @@ function scheduleResolution(moving, frameMs){
 }
 function schedulePost(moving){
   if (!composer) return;
-  if (aoPass){ if (moving){ aoPass.enabled = false; aoFade = 0; } else { aoPass.enabled = true; aoFade = Math.min(1, aoFade + .1); aoPass.blendIntensity = .9*aoFade; } }
-  if (bloomPass) bloomPass.enabled = !moving;
+  const pause = moving && dyn.low;                       // now that the occlusion needs no second drawing of the scene it stays on while the view moves; it only pauses where frames are slow
+  if (aoPass){ if (pause || !postReady){ aoPass.enabled = false; aoFade = 0; } else { aoPass.enabled = true; aoFade = Math.min(1, aoFade + .1); aoPass.blendIntensity = .9*aoFade; } }
+  if (bloomPass) bloomPass.enabled = !pause && postReady;
+  if (smaaPass) smaaPass.enabled = postReady;
 }
 
 /* ================= LOOP ================= */
 function resize(){
-  syncAppH(); const w = innerWidth, h = appH(); renderer.setSize(w, h, false);
+  syncAppH(); const w = innerWidth, h = appH(), pr = renderer.getPixelRatio();
+  if (canvas.width !== Math.floor(w*pr) || canvas.height !== Math.floor(h*pr)) renderer.setSize(w, h, false);
   persp.aspect = w/h; persp.updateProjectionMatrix();
   const s = 17; ortho.left=-s*w/h; ortho.right=s*w/h; ortho.top=s; ortho.bottom=-s; ortho.updateProjectionMatrix();
-  composer?.setSize(w, h);
+  if (composer && (composer._width !== w || composer._height !== h || composer._pixelRatio !== pr)){ composer._pixelRatio = pr; composer.setSize(w, h); }
 }
 addEventListener('resize', resize);
 let last = performance.now();
@@ -5015,8 +5273,8 @@ function loop(now){
   if (!photo){ windU.uTime.value = now/1000; waterNormal.offset.set(now*1.2e-5, now*0.8e-5); }
   const moving = trackMotion(now);
   if (envDirty && now-lastEnv > 250) updateEnv();
-  if (!photo && Q().reflect && reflDirty && now-lastRefl > (moving ? 1500 : 600)) updateReflections();
-  if (!photo){ scheduleShadows(now, moving); schedulePost(moving); scheduleResolution(moving, frameMs); updateNeighbours(); }
+  if (!photo && Q().reflect && (reflFace >= 0 || (reflDirty && now-lastRefl > (moving ? 1500 : 600)))) stepReflections();
+  if (!photo){ updateBatches(); scheduleShadows(now, moving); schedulePost(moving); scheduleResolution(moving, frameMs); updateNeighbours(); }
   renderFrame();
   if (photo && now-photoStatusT > 250){ photoStatusT = now;
     if (photo.kind==='pt') setStatus(`Path tracing (beta) · ${Math.floor(photo.pt.samples)} samples · grain clears over time · click the view to leave`);
@@ -5031,7 +5289,66 @@ autoArmed = true;
 mat.lawn.color.setHex(SEASON[ui.season].lawn); setSeason(ui.season, true);
 if (!ownSince) applyCam(DEFAULT_CAM);
 initDone = true;
-requestAnimationFrame(loop);
+document.getElementById('app').classList.remove('booting');
+
+/* ---------- start-up ----------
+   Compiling shaders is the slowest part of loading. Every program the first frame needs is created up front and
+   compiled by the browser in the background (in parallel where it can), while the loading note shows the progress;
+   the loop starts when they are ready. Ambient occlusion, bloom and anti-aliasing compile after the first frames
+   and switch on when ready; things that are hidden for now (snow, autumn leaves, small fittings) come last. */
+const bootEl = document.getElementById('boot');
+function bootMsg(t, done, total){ if (!bootEl.isConnected) return; document.getElementById('boot-msg').textContent = t;
+  if (total){ const bar = bootEl.querySelector('.boot-bar'); bar.classList.add('det'); bar.firstElementChild.style.transform = `scaleX(${Math.max(.04, done/total).toFixed(3)})`; } }
+function programsReady(){ let n = 0; const L = renderer.info.programs; for (const p of L) if (p.isReady()) n++; return [n, L.length]; }
+function whenProgramsReady(onProgress, maxMs = 30000){
+  return new Promise(res=>{ const t0 = performance.now();
+    (function poll(){ const [n, t] = programsReady(); if (onProgress) onProgress(n, t); if (n >= t || performance.now() - t0 > maxMs) res(); else setTimeout(poll, 20); })(); });
+}
+function compileLike(objects, target, ctx){ // create (without waiting for) the programs these objects' materials need when drawn into `target`; null is the screen
+  const prevRT = renderer.getRenderTarget(), face = renderer.getActiveCubeFace(), mip = renderer.getActiveMipmapLevel();
+  try { renderer.setRenderTarget(target); renderer.compile({traverseVisible(){}, traverse(cb){ for (const o of objects) cb(o); }}, camera, ctx); }
+  catch(e){ console.warn('shader warm-up skipped:', e); }
+  finally { renderer.setRenderTarget(prevRT, face, mip); }
+}
+const mainTarget = ()=>composer ? composer.readBuffer : null;         // programs differ between drawing to the screen and into the post-processing chain
+const _fsTri = new THREE.BufferGeometry();
+_fsTri.setAttribute('position', new THREE.Float32BufferAttribute([-1,3,0, -1,-1,0, 3,-1,0], 3)); _fsTri.setAttribute('uv', new THREE.Float32BufferAttribute([0,2, 0,0, 2,0], 2));
+async function warmPost(){ // the post-processing shaders, compiled in the background; the passes switch on when they are ready
+  if (!composer){ postReady = true; return; }
+  const gen = postGen, passes = composer.passes.filter(p=>p !== renderPass), lastPass = composer.passes[composer.passes.length-1];
+  const matsOf = p=>{ const out = []; for (const [k, v] of Object.entries(p)){ if (k === 'normalMaterial' || k === 'depthRenderMaterial' || (p.mixMaterial && (k === 'copyMaterial' || k === 'blendMaterial'))) continue;
+    if (v && v.isMaterial) out.push(v); else if (Array.isArray(v)) for (const x of v) if (x && x.isMaterial) out.push(x); } return out; };
+  const quad = m=>new THREE.Mesh(_fsTri, m), holder = new THREE.Object3D();
+  compileLike(passes.flatMap(matsOf).map(quad), composer.readBuffer, holder);                    // full-screen passes drawing into the chain
+  compileLike(matsOf(lastPass).map(quad), null, holder);                                           // and the one that draws to the screen
+  if (aoPass && aoPass._renderGBuffer){ const reps = new Map();                                    // the normal pre-pass: one stand-in per kind of mesh
+    scene.traverseVisible(o=>{ if (!o.isMesh) return; const k = (o.isSkinnedMesh ? 's' : '') + (o.isInstancedMesh ? 'i' + (o.instanceColor ? 'c' : '') : ''); if (!reps.has(k)) reps.set(k, o); });
+    compileLike([...reps.values()].map(o=>Object.assign(Object.create(o), {material:aoPass.normalMaterial})), aoPass.normalRenderTarget, scene); }
+  await whenProgramsReady();
+  if (gen === postGen) postReady = true;
+}
+async function startUp(){
+  bootMsg('Preparing materials…');
+  await new Promise(r=>setTimeout(r, 0));
+  updateEnv();                                                         // the sky as environment light: the materials are compiled against it
+  const vis = []; scene.traverseVisible(o=>{ if (o.material) vis.push(o); });
+  compileLike(vis, mainTarget(), scene);
+  // while the shaders compile in the background: the work the first frame would otherwise do on top (batches, texture uploads)
+  updateBatches();
+  { const seen = new Set(); for (const o of vis) for (const m of (Array.isArray(o.material) ? o.material : [o.material])) for (const k of ['map', 'normalMap', 'bumpMap', 'emissiveMap', 'alphaMap', 'clearcoatNormalMap']){
+      const t = m[k]; if (t && t.isTexture && !t.isRenderTargetTexture && t.image && !seen.has(t)){ seen.add(t); try { renderer.initTexture(t); } catch(e){} } } }
+  await whenProgramsReady((n, t)=>bootMsg('Preparing materials…', n, t));
+  started = true; last = performance.now(); lastRefl = last - 350;       // the first garden reflection a moment after the first frame
+  requestAnimationFrame(loop);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ bootEl.classList.add('done'); setTimeout(()=>bootEl.remove(), 500); }));
+  await new Promise(r=>setTimeout(r, 120));
+  await warmPost();
+  if (renderer.extensions.has('KHR_parallel_shader_compile')){
+    const hid = []; (function walk(o, vis){ vis = vis && o.visible; if (o.material && !vis) hid.push(o); for (const c of o.children) walk(c, vis); })(scene, true);
+    compileLike(hid, mainTarget(), scene); }                               // hidden for now: compiled in the background so that showing them later does not stall
+  (window.requestIdleCallback || (f=>setTimeout(f, 2500)))(()=>{ if (nb.bake && !photo) nb.bake(); }, {timeout:6000});   // far-away house pictures, while nothing else is going on
+}
+startUp();
 </script>
 </body>
 </html>

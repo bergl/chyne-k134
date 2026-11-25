@@ -561,7 +561,7 @@ table.facts td{border-bottom:1px solid var(--line)}
   <div id="roomcard" hidden></div>
   <div id="savetoast" hidden role="status" aria-live="polite"></div>
   <div id="photobar" hidden style="position:absolute;left:50%;transform:translateX(-50%);bottom:calc(44px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;z-index:4">
-    <button class="btn primary" id="photo-save">Save image</button><button class="btn" id="photo-pt" title="Experimental: physically based path tracing, slow and grainy at first">Path trace (beta)</button><button class="btn" id="photo-exit">Exit photo</button>
+    <button class="btn primary" id="photo-save">Save image</button><button class="btn" id="photo-pt" title="A physically based render of this view: real sunlight and sky light, soft shadows, light through leaves, true glass and water. Takes a few minutes; the picture clears as it goes">Path trace (beta)</button><button class="btn" id="photo-exit">Exit photo</button>
   </div>
   <div id="walkpad" hidden>
     <button class="btn" data-walk="l" aria-label="Turn left">◀</button><button class="btn" data-walk="f">▲ Forward</button><button class="btn" data-walk="b">▼ Back</button><button class="btn" data-walk="r" aria-label="Turn right">▶</button><button class="btn" id="walkexit">Exit</button>
@@ -4385,7 +4385,8 @@ function accumStep(){
    edges; light bounces between surfaces and through leaves; glass and water refract. The tracer reads the scene
    once: it is put into shape for it here (what only the tracer needs, what it cannot draw), and the live scene is
    put back straight afterwards. */
-const PTO = { samples:320, sky:1, sunRadius:.7, leafT:.45, grassT:.35, leafTint:.8, foliage:1.4, exposure:1.3, grass:110, bounces:7, maxPixels:2.4e6, clamp:30, texture:1024, denoise:1 };
+const PT_SMALL = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 700;
+const PTO = { samples:320, sky:1, sunRadius:.7, leafT:.45, grassT:.35, leafTint:.8, foliage:1.4, exposure:1.3, grass:PT_SMALL ? 60 : 110, bounces:7, maxPixels:PT_SMALL ? 1.1e6 : 2.4e6, clamp:30, texture:1024, denoise:1, lamp:1.6, key:.3 };
 function ptSkyTexture(disc){ // the sky as the tracer's light and backdrop: the live sky's colours and clouds; with `disc`, the sun as a disc that carries the sunlight (otherwise the sun is a light of its own)
   const W = 2048, H = 1024, f = new Float32Array(W*H*4), U = sky.material.uniforms, K = PTO.sky;
   const top = U.top.value, hor = U.horizon.value, sc = U.sunCol.value, sd = U.sunDir.value.clone().normalize(), gnd = envGround.material.color;
@@ -4511,13 +4512,24 @@ function ptKit(){ if (ptK) return ptK;
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
     }`, {toneMapped:true});
-  return ptK = {geo, filter, show};
+  const meter = mk({tIn:{value:null}}, `uniform sampler2D tIn; varying vec2 vUv;
+    void main(){ float l = 0.0; for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) l += min(dot(texture2D(tIn, vUv + (vec2(float(i), float(j)) - 1.5) / vec2(256.0, 160.0)).rgb, vec3(0.2126, 0.7152, 0.0722)), 1.5);
+      gl_FragColor = vec4(sqrt(l / 24.0), 0.0, 0.0, 1.0); }`);
+  const meterRT = new THREE.WebGLRenderTarget(64, 40, {depthBuffer:false});
+  return ptK = {geo, filter, show, meter, meterRT};
+}
+function ptMeter(tex){ // the picture's brightness as a camera meters it: the average over the frame, the middle counting more, bright windows capped
+  const K = ptKit(), prev = renderer.getRenderTarget(), px = new Uint8Array(64*40*4); K.meter.material.uniforms.tIn.value = tex;
+  renderer.setRenderTarget(K.meterRT); K.meter.render(renderer); renderer.readRenderTargetPixels(K.meterRT, 0, 0, 64, 40, px); renderer.setRenderTarget(prev);
+  let sum = 0, wsum = 0; for (let y = 0; y < 40; y++) for (let x = 0; x < 64; x++){ const w = 1.5 - Math.hypot((x - 31.5)/32, (y - 19.5)/20); const v = px[(y*64 + x)*4]/255; sum += w*v*v*1.5; wsum += w; }
+  return sum/wsum;
 }
 function ptGuides(w, h){ // every surface's own colour (alpha 0: nothing to smooth here) and its distance, drawn by the ordinary renderer from the camera of the photo
   const rt = new THREE.WebGLRenderTarget(w, h, {type:THREE.HalfFloatType, minFilter:THREE.NearestFilter, magFilter:THREE.NearestFilter, depthTexture:new THREE.DepthTexture(w, h)});
   const amb = new THREE.AmbientLight(0xffffff, Math.PI), undo = [], set = (o, k, v)=>{ const old = o[k]; o[k] = v; undo.push(()=>{ o[k] = old; }); };
   const mask = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0, blending:THREE.NoBlending}), seen = new Set();
   scene.traverseVisible(m=>{ if (!m.isMesh || Array.isArray(m.material)) return; const x = m.material;
+    if (x.transmission > 0 && x.thickness === 0){ set(m, 'visible', false); return; }                 // a window pane: what lies behind it is smoothed like anything else
     if (x.transmission > 0 || (x.transparent && x.opacity < .99)){ set(m, 'material', mask); return; }
     if (!seen.has(x)){ seen.add(x); if ('envMapIntensity' in x) set(x, 'envMapIntensity', 0); } });
   // flat light only: no sun, no sky; the plants stand still, as the tracer sees them
@@ -4553,6 +4565,19 @@ function ptSplit(m){ // a mesh with several materials as one mesh per material: 
     const mm = new THREE.Mesh(sub, mt); mm.matrixAutoUpdate = false; mm.matrix.copy(m.matrixWorld); out.push(mm); }
   return out;
 }
+function ptSnow(meshes, cover){ // snow lies on what faces up: the live view paints it on in its shaders, the tracer gets a thin white skin there (not under the roof)
+  const P = [], N = [], thr = THREE.MathUtils.lerp(.99, .62, Math.min(1, cover*1.35)), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3(), e = new THREE.Vector3();
+  for (const m of meshes){ const g = m.geometry, pos = g.attributes.position, x = m.material; if (!pos || !x.userData || !x.userData.snowed || x.userData.wind || x.transmission > 0) continue;
+    const idx = g.index, cnt = idx ? idx.count : pos.count, W = m.matrixWorld, flip = W.determinant() < 0 ? -1 : 1; if (cnt > 600000) continue;
+    for (let t = 0; t + 2 < cnt; t += 3){ a.fromBufferAttribute(pos, idx ? idx.getX(t) : t).applyMatrix4(W); b.fromBufferAttribute(pos, idx ? idx.getX(t+1) : t+1).applyMatrix4(W); c.fromBufferAttribute(pos, idx ? idx.getX(t+2) : t+2).applyMatrix4(W);
+      n.subVectors(b, a).cross(e.subVectors(c, a)); const l = n.length(); if (l < 1e-9) continue; n.multiplyScalar(flip/l); if (n.y < thr) continue;
+      const cx = (a.x + b.x + c.x)/3, cy = (a.y + b.y + c.y)/3, cz = (a.z + b.z + c.z)/3;
+      if (cy < 5.5 && pip([cx, cz], GF_POLY) && (cy < 2.9 || pip([cx, cz], UF_POLY))) continue;                    // indoors
+      for (const v of [a, b, c]){ P.push(v.x + n.x*.008, v.y + n.y*.008 + .004, v.z + n.z*.008); N.push(n.x, n.y, n.z); } } }
+  if (!P.length) return null;
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+  return new THREE.Mesh(g, new THREE.MeshStandardMaterial({color:new THREE.Color(.93, .95, .98), roughness:.9}));
+}
 function ptPrepare(leaves){ // returns the function that puts the live scene back
   const undo = [], temp = [], tempMats = [];
   const set = (o, k, v)=>{ const had = k in o, old = o[k]; if (old === v) return; o[k] = v; undo.push(()=>{ if (had) o[k] = old; else delete o[k]; }); };
@@ -4584,12 +4609,13 @@ function ptPrepare(leaves){ // returns the function that puts the live scene bac
     if (x.envMap) set(x, 'envMap', null);
     const wk = x.userData && x.userData.wind; if (wk && !x.transparent){ const t = wk === 'grass' ? PTO.grassT : PTO.leafT; if (t > 0 && leaves) set(x, 'transmission', -t);   // negative: the mark for "lit from both sides" (see ptPatchShader)
       if (PTO.foliage !== 1) set(x, 'color', x.color.clone().multiplyScalar(PTO.foliage)); } }
-  // what the tracer needs made for it: instanced things as plain meshes, every neighbouring house
+  // what the tracer needs made for it: instanced things as plain meshes, every neighbouring house, the snow
   const add = m=>{ if (m){ extra.add(m); temp.push(m); } };
   if (!PTO.dbgNoExpand) for (const im of inst){ const m = ptExpand(im); if (m && m.material !== im.material) tempMats.push(m.material); add(m); }
   if (nb.ready && cityGroup.visible && !PTO.dbgNoNb){ const c = persp.position, lists = [[], [], []];
     for (const h of nb.houses){ if (h.c.distanceTo(c) < 130){ lists[0].push(nb.im[0][h.mir].geometry.clone().applyMatrix4(h.m4)); lists[1].push(nb.im[1][h.mir].geometry.clone().applyMatrix4(h.m4)); } else lists[2].push(nb.lod1[h.mir].clone().applyMatrix4(h.m4)); }
     lists.forEach((geos, i)=>{ if (!geos.length) return; const merged = mergeGeometries(geos, false); for (const g of geos) g.dispose(); if (merged) add(new THREE.Mesh(merged, nb.im[i][0].material)); }); }
+  if (snowU.uSnow.value > .05){ const sm = ptSnow(keep.concat(extra.children.filter(m=>temp.includes(m))), snowU.uSnow.value); if (sm){ tempMats.push(sm.material); add(sm); } }
   scene.add(extra);
   // the tracer pads meshes without vertex colours with RGBA colours, so RGB ones are widened to match while it reads the scene
   const rgb = new Map();
@@ -4634,13 +4660,23 @@ async function startPathTrace(){
       scene.environment = env; scene.background = env; scene.fog = null; sun.visible = false;
       if (feat.both && keep[3] && sun.intensity > 0){ const D = 20000, R = D*Math.tan(PTO.sunRadius*Math.PI/180), dir = sun.position.clone().sub(sun.target.position).normalize();
         sunL = new PT.ShapedAreaLight(sun.color, sun.intensity*D*D/(Math.PI*R*R), 2*R, 2*R); sunL.isCircular = true; sunL.position.copy(sun.target.position).addScaledVector(dir, D); sunL.lookAt(sun.target.position); scene.add(sunL); }
-      try { pt.setScene(scene, persp); } finally { [scene.environment, scene.background, scene.fog, sun.visible] = keep; if (sunL) scene.remove(sunL); }
+      // indoors the lights are on: a soft light under the ceiling of the room, and one under each ceiling panel with LED strips near by
+      const lamps = [];
+      if (feat.both && walk.on && walk.inside && PTO.lamp > 0){ const r = walk.room, lamp = (x, y, z, w, d, k)=>{ const L = new PT.ShapedAreaLight(0xfff0dc, PTO.lamp*k, w, d); L.position.set(x, y, z); L.rotation.x = -Math.PI/2; scene.add(L); lamps.push(L); };
+        if (r){ const xs = r.p.map(q=>q[0]), ys = r.p.map(q=>q[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), base = (r.f ? 3.17 : 0) + (r.y || 0);
+          lamp((x0 + x1)/2, base + 2.8, (y0 + y1)/2, Math.max(.8, (x1 - x0)*.5), Math.max(.8, (y1 - y0)*.5), 1); }
+        const near = state.objects.filter(o=>o.type === 'ceiling' && (o.p.leds || 0) > 0 && meshById.get(o.id)?.visible).map(o=>({o, d:Math.hypot(o.x - persp.position.x, o.y - persp.position.z)})).filter(e=>e.d < 9).sort((a, b)=>a.d - b.d).slice(0, 3);
+        for (const {o} of near){ const g = meshById.get(o.id), q = new THREE.Vector3(0, 2.845 - (o.p.h || .02) - .03, 0).applyMatrix4(g.matrixWorld), rot = ((o.rot || 0) % 180 + 180) % 180, sw = rot > 45 && rot < 135;
+          lamp(q.x, q.y, q.z, Math.max(.3, ((sw ? o.p.d : o.p.w) || 2)*.9), Math.max(.3, ((sw ? o.p.w : o.p.d) || 2)*.9), 1.5); } }
+      try { pt.setScene(scene, persp); } finally { [scene.environment, scene.background, scene.fog, sun.visible] = keep; if (sunL) scene.remove(sunL); for (const L of lamps) scene.remove(L); }
     } finally { restore(); shadowDirty = true; }
     if (PTO.log){ const G = pt._generator.geometry, M = pt._materials; console.log('PT scene:', Math.round(tB - tA), 'ms to prepare,', Math.round(performance.now() - tB), 'ms to read;', Math.round((G.index ? G.index.count : G.attributes.position.count)/3000) + 'k triangles,', Math.round(G.attributes.position.count/1000) + 'k vertices,', M.length, 'material slots,', new Set(M).size, 'materials;', JSON.stringify(feat)); }
-    const P = photo = {kind:'pt', pt, env, dn, hidden, prevPR, t0:performance.now(), done:false};
+    const P = photo = {kind:'pt', pt, env, dn, hidden, prevPR, t0:performance.now(), done:false, exposure:PTO.exposure, indoor:walk.on && walk.inside, metered:0};
     pt.renderToCanvasCallback = (target)=>{ const K = ptKit(), n = Math.floor(pt.samples + 1e-3), r = renderer; let src = target.texture;
       if (dn && PTO.denoise > 0){ if (n >= 1 && dn.at !== n){ dn.run(target.texture, n); dn.at = n; } if (dn.at >= 1) src = dn.C.texture; }
-      const ac = r.autoClear, ex = r.toneMappingExposure; r.autoClear = false; r.toneMappingExposure = ex*PTO.exposure; K.show.material.uniforms.tIn.value = src;
+      // indoors the exposure follows the picture, as a camera's would (outdoors it stays put, so that evening stays evening); it settles within the first samples
+      if (P.indoor && n >= 1 && n !== P.metered && (n <= 2 || n === 4 || n === 8 || n === 16)){ P.metered = n; const lum = ptMeter(src); if (lum > 0) P.exposure = THREE.MathUtils.clamp(PTO.key/lum, 1, 40); if (PTO.log) console.log('PT meter:', n, lum.toFixed(4), P.exposure.toFixed(2)); }
+      const ac = r.autoClear, ex = r.toneMappingExposure; r.autoClear = false; r.toneMappingExposure = ex*P.exposure; K.show.material.uniforms.tIn.value = src;
       try { K.show.render(r); } finally { r.toneMappingExposure = ex; r.autoClear = ac; } };
   } catch(e){
     if (pt) ptDispose(pt); if (env) env.dispose(); if (dn) dn.dispose(); hidden.forEach(o=>o.visible=true); renderer.setPixelRatio(prevPR); resize(); envDirty = true; shadowDirty = true;
@@ -4648,8 +4684,12 @@ async function startPathTrace(){
   }
   photoCommon();
 }
-function ptFrame(){ const P = photo, pt = P.pt;
+function ptFrame(){ const P = photo, pt = P.pt, now = performance.now();
   if (!P.done && pt.samples >= PTO.samples){ P.done = true; pt.pausePathTracing = true; }
+  if (!P.done && !pt.isCompiling && pt.samples > 0){ // the work per frame follows the graphics card: smaller tiles when frames get long, larger ones when there is time to spare
+    if (P.tPrev){ P.ms = P.ms ? P.ms*.8 + (now - P.tPrev)*.2 : now - P.tPrev; P.nf = (P.nf || 0) + 1;
+      if (P.nf >= 10){ P.nf = 0; const t = pt.tiles.x; if (P.ms > 90 && t < 8) pt.tiles.set(t + 1, t + 1); else if (P.ms < 24 && t > 1) pt.tiles.set(t - 1, t - 1); } }
+    P.tPrev = now; }
   pt.renderSample();
 }
 function ptStatus(){ const P = photo, pt = P.pt, n = Math.floor(pt.samples);

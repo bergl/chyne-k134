@@ -561,7 +561,7 @@ table.facts td{border-bottom:1px solid var(--line)}
   <div id="roomcard" hidden></div>
   <div id="savetoast" hidden role="status" aria-live="polite"></div>
   <div id="photobar" hidden style="position:absolute;left:50%;transform:translateX(-50%);bottom:calc(44px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;z-index:4">
-    <button class="btn primary" id="photo-save">Save image</button><button class="btn" id="photo-pt" title="Experimental: physically based path tracing, slow and grainy at first">Path trace (beta)</button><button class="btn" id="photo-exit">Exit photo</button>
+    <button class="btn primary" id="photo-save">Save image</button><button class="btn" id="photo-pt" title="A physically based render of this view: real sunlight and sky light, soft shadows, light through leaves, true glass and water. Takes a few minutes; the picture clears as it goes">Path trace (beta)</button><button class="btn" id="photo-exit">Exit photo</button>
   </div>
   <div id="walkpad" hidden>
     <button class="btn" data-walk="l" aria-label="Turn left">◀</button><button class="btn" data-walk="f">▲ Forward</button><button class="btn" data-walk="b">▼ Back</button><button class="btn" data-walk="r" aria-label="Turn right">▶</button><button class="btn" id="walkexit">Exit</button>
@@ -2328,7 +2328,7 @@ function nbOccluder(e){ // raise the horizon along the top edges of a building's
   }
 }
 function updateNeighbours(){
-  if (!nb.ready || !cityGroup.visible || nb.pt) return;
+  if (!nb.ready || !cityGroup.visible) return;
   const cam = camera, S = nb.stats; cam.updateMatrixWorld();
   nbPS.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); nbFrustum.setFromProjectionMatrix(nbPS);
   const cp = cam.position, ortho = !cam.isPerspectiveCamera;
@@ -2374,14 +2374,6 @@ function updateNeighbours(){
   if (scene.fog){ U.uFog.value.copy(scene.fog.color); U.uFogNear.value = scene.fog.near; U.uFogFar.value = scene.fog.far; }
 }
 const _v3 = new THREE.Vector3();
-function nbForPhotoPT(on){ // the path tracer cannot draw instanced meshes: swap in one static LOD1 mesh while it runs
-  if (!nb.ready) return;
-  nb.pt = on;
-  for (const m of nb.im.flat()) m.visible = !on;
-  nb.imp.visible = !on && nb.imp.geometry.instanceCount > 0;
-  if (on){ const geos = nb.houses.map(h=>nb.lod1[h.mir].clone().applyMatrix4(h.m4)); nb.ptMesh = new THREE.Mesh(mergeGeometries(geos), nb.l1Mat); cityGroup.add(nb.ptMesh); }
-  else if (nb.ptMesh){ cityGroup.remove(nb.ptMesh); nb.ptMesh.geometry.dispose(); nb.ptMesh = null; }
-}
 const fences = new THREE.Group(); scene.add(fences);
 const plotLineGroup = new THREE.Group(); scene.add(plotLineGroup);
 const terrainGroup = new THREE.Group(); scene.add(terrainGroup);
@@ -2624,10 +2616,16 @@ const clumpMat = windify(new THREE.MeshStandardMaterial({vertexColors:true, side
 const leafTexCache = {};
 function leafTexture(kind){
   if (leafTexCache[kind]) return leafTexCache[kind];
-  const c=document.createElement('canvas'); c.width=c.height=128; const g=c.getContext('2d');
+  const c=document.createElement('canvas'); c.width=c.height=256; const g=c.getContext('2d'); g.scale(2, 2);   // drawn in the units of a 128 px picture, at twice the detail
   let sd=hashStr(kind); const r=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
   const leaf=(x,y,a,L,W,col)=>{ g.save(); g.translate(x,y); g.rotate(a); g.fillStyle=col; g.beginPath(); g.moveTo(-L/2,0); g.quadraticCurveTo(0,-W,L/2,0); g.quadraticCurveTo(0,W,-L/2,0); g.fill();
-    g.strokeStyle='rgba(0,0,0,.18)'; g.lineWidth=1; g.beginPath(); g.moveTo(-L/2,0); g.lineTo(L/2,0); g.stroke(); g.restore(); };
+    g.save(); g.clip();                                                // inside the leaf: a darker rim, a midrib and side veins, one half a touch lighter than the other
+    const rim = g.createLinearGradient(0,-W*.55,0,W*.55); rim.addColorStop(0,'rgba(0,0,0,.16)'); rim.addColorStop(.3,'rgba(0,0,0,0)'); rim.addColorStop(.7,'rgba(0,0,0,0)'); rim.addColorStop(1,'rgba(0,0,0,.2)'); g.fillStyle=rim; g.fillRect(-L/2,-W,L,2*W);
+    g.fillStyle='rgba(255,255,255,.07)'; g.fillRect(-L/2,-W,L,W);
+    g.strokeStyle='rgba(0,0,0,.13)'; g.lineWidth=.55; g.beginPath();
+    for (let k=1;k<8;k++){ const vx=-L/2+L*k/8, len=W*.62*Math.sin(Math.PI*k/8)+1; g.moveTo(vx,0); g.lineTo(vx+len*.75,-len); g.moveTo(vx,0); g.lineTo(vx+len*.75,len); } g.stroke();
+    g.restore();
+    g.strokeStyle='rgba(0,0,0,.24)'; g.lineWidth=.9; g.beginPath(); g.moveTo(-L/2,0); g.lineTo(L/2,0); g.stroke(); g.restore(); };
   if (kind==='blossom' || kind==='fruitblossom'){
     for (let i=0;i<3;i++) leaf(30+r()*70, 30+r()*70, r()*6.3, 26, 9, '#7fa858');
     for (let i=0;i<10;i++){ const x=16+r()*96, y=16+r()*96, R=8+r()*6;
@@ -4388,39 +4386,331 @@ function accumStep(){
   }
   showQuad.material.uniforms.t.value = P.rt[P.i].texture; showQuad.render(renderer);
 }
+/* ---------- path-traced photo ----------
+   The same scene, rendered by following light. The sun is a small, very bright disc in the sky, so shadows get soft
+   edges; light bounces between surfaces and through leaves; glass and water refract. The tracer reads the scene
+   once: it is put into shape for it here (what only the tracer needs, what it cannot draw), and the live scene is
+   put back straight afterwards. */
+const PT_SMALL = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 700;
+const PTO = { samples:320, sky:1, sunRadius:.7, leafT:.45, grassT:.35, leafTint:.8, leafShadow:.8, foliage:1.5, exposure:1.3, grass:PT_SMALL ? 60 : 110, bounces:7, maxPixels:PT_SMALL ? 1.1e6 : 3e6, clamp:30, texture:1024, denoise:1, lamp:1.6, key:.3 };
+function ptSkyTexture(disc){ // the sky as the tracer's light and backdrop: the live sky's colours and clouds; with `disc`, the sun as a disc that carries the sunlight (otherwise the sun is a light of its own)
+  const W = 2048, H = 1024, f = new Float32Array(W*H*4), U = sky.material.uniforms, K = PTO.sky;
+  const top = U.top.value, hor = U.horizon.value, sc = U.sunCol.value, sd = U.sunDir.value.clone().normalize(), gnd = envGround.material.color;
+  const dir = (x, y, o)=>{ const th = ((x + .5)/W - .5)*2*Math.PI, ph = (1 - (y + .5)/H)*Math.PI, sn = Math.sin(ph); o[0] = sn*Math.cos(th); o[1] = Math.cos(ph); o[2] = sn*Math.sin(th); return o; };
+  const d = [0, 0, 0];
+  for (let y = 0; y < H; y++){ // the gradient and the glow around the sun, as the sky dome draws them; below the horizon, the colour of distant ground
+    const ph = (1 - (y + .5)/H)*Math.PI, cy = Math.cos(ph), sy = Math.sin(ph), g = Math.pow(Math.max(cy, 0), .55), low = Math.min(1, Math.max(0, -cy/.04));
+    const r0 = (hor.r + (top.r - hor.r)*g)*(1 - low) + gnd.r*low, g0 = (hor.g + (top.g - hor.g)*g)*(1 - low) + gnd.g*low, b0 = (hor.b + (top.b - hor.b)*g)*(1 - low) + gnd.b*low;
+    for (let x = 0; x < W; x++){ const th = ((x + .5)/W - .5)*2*Math.PI, sdot = Math.max(sy*Math.cos(th)*sd.x + cy*sd.y + sy*Math.sin(th)*sd.z, 0), i = (y*W + x)*4;
+      const glow = low < 1 ? (Math.pow(sdot, 900)*1.5 + Math.pow(sdot, 12)*.35)*(1 - low) : 0;
+      f[i] = (r0 + sc.r*glow)*K; f[i+1] = (g0 + sc.g*glow)*K; f[i+2] = (b0 + sc.b*glow)*K; f[i+3] = 1; } }
+  if (clouds.visible){ // each cloud picture, laid onto the sky where it is seen from the camera
+    const c = persp.position, Pw = new THREE.Vector3(), pix = new Map(), lin = new Float32Array(256); for (let i = 0; i < 256; i++){ const v = i/255; lin[i] = v < .04045 ? v/12.92 : Math.pow((v + .055)/1.055, 2.4); }
+    for (const sp of clouds.children){ const m = sp.material, cv = m.map && m.map.image; if (!cv || !cv.getContext) continue;
+      let px = pix.get(m); if (!px){ px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height); pix.set(m, px); }
+      sp.getWorldPosition(Pw); const vx = Pw.x - c.x, vy = Pw.y - c.y, vz = Pw.z - c.z, D = Math.hypot(vx, vy, vz), nx = vx/D, ny = vy/D, nz = vz/D; if (ny < .02 || ny > .96) continue;
+      const rl = Math.hypot(nz, nx), rx = nz/rl, rz = -nx/rl, ux = ny*rz, uy = nz*rx - nx*rz, uz = -ny*rx;          // the picture's right and up, facing the camera
+      const hw = sp.scale.x/2, hh = sp.scale.y/2, ar = Math.atan(Math.hypot(hw, hh)/D), phC = Math.acos(ny), thC = Math.atan2(nz, nx);
+      const yA = Math.max(0, Math.floor((1 - (phC + ar)/Math.PI)*H)), yB = Math.min(H - 1, Math.ceil((1 - (phC - ar)/Math.PI)*H));
+      const dth = Math.min(Math.PI, 1.2*ar/Math.max(.05, Math.sin(Math.max(.01, phC - ar)))), xC = (thC/(2*Math.PI) + .5)*W, dx = Math.ceil(dth/(2*Math.PI)*W) + 1;
+      const cr = m.color.r*K, cg = m.color.g*K, cb = m.color.b*K, op = m.opacity, cw = px.width, ch = px.height, data = px.data;
+      for (let y = yA; y <= yB; y++) for (let xi = Math.floor(xC - dx); xi <= xC + dx; xi++){ const x = ((xi % W) + W) % W; dir(x, y, d);
+        const dn = d[0]*nx + d[1]*ny + d[2]*nz; if (dn < .05) continue; const t = D/dn, qx = d[0]*t - vx, qy = d[1]*t - vy, qz = d[2]*t - vz;
+        const u = (qx*rx + qz*rz)/(2*hw) + .5, v = (qx*ux + qy*uy + qz*uz)/(2*hh) + .5; if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+        const k = (Math.min(ch - 1, Math.floor((1 - v)*ch))*cw + Math.min(cw - 1, Math.floor(u*cw)))*4, a = data[k+3]/255*op; if (a <= 0) continue;
+        const i = (y*W + x)*4; f[i] += (lin[data[k]]*cr - f[i])*a; f[i+1] += (lin[data[k+1]]*cg - f[i+1])*a; f[i+2] += (lin[data[k+2]]*cb - f[i+2])*a; } } }
+  if (disc && sun.visible && sun.intensity > 0){ // the sun: a disc a little larger than the real one, with as much light in it as the sun lamp of the live view gives
+    const R = PTO.sunRadius*Math.PI/180, e = Math.PI/H*.75, ext = R + 2*e, phS = Math.acos(sd.y), thS = Math.atan2(sd.z, sd.x), cells = []; let sum = 0;
+    const yA = Math.max(0, Math.floor((1 - (phS + ext)/Math.PI)*H)), yB = Math.min(H - 1, Math.ceil((1 - (phS - ext)/Math.PI)*H));
+    const dth = Math.min(Math.PI, 1.2*ext/Math.max(.02, Math.sin(Math.max(.01, phS - ext)))), xC = (thS/(2*Math.PI) + .5)*W, dx = Math.ceil(dth/(2*Math.PI)*W) + 1;
+    for (let y = yA; y <= yB; y++) for (let xi = Math.floor(xC - dx); xi <= xC + dx; xi++){ const x = ((xi % W) + W) % W; dir(x, y, d);
+      const ang = Math.acos(Math.min(1, d[0]*sd.x + d[1]*sd.y + d[2]*sd.z)), w = 1 - THREE.MathUtils.smoothstep(ang, R - e, R + e); if (w <= 0) continue;
+      cells.push((y*W + x)*4, w); sum += w*(2*Math.PI/W)*(Math.PI/H)*Math.sin((1 - (y + .5)/H)*Math.PI); }
+    if (sum > 0){ const E = sun.color.clone().multiplyScalar(sun.intensity/sum);
+      for (let k = 0; k < cells.length; k += 2){ const i = cells[k], w = cells[k+1]; f[i] += E.r*w; f[i+1] += E.g*w; f[i+2] += E.b*w; } } }
+  const h = new Uint16Array(f.length), half = THREE.DataUtils.toHalfFloat; for (let i = 0; i < f.length; i++) h[i] = half(Math.min(f[i], 65000));
+  const t = new THREE.DataTexture(h, W, H, THREE.RGBAFormat, THREE.HalfFloatType); t.mapping = THREE.EquirectangularReflectionMapping;
+  t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.ClampToEdgeWrapping; t.minFilter = t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t;
+}
+function ptExpand(im, maxTris = 90000){ // an instanced mesh as one plain mesh in world space (the tracer cannot draw instances); a very large one is thinned out
+  const g = im.geometry, pos = g.attributes.position, nor = g.attributes.normal, uv = g.attributes.uv, col = g.attributes.color, idx = g.index; if (!pos || !nor) return null;
+  const tris = (idx ? idx.count : pos.count)/3, step = Math.max(1, Math.ceil(im.count*tris/maxTris)), n = Math.ceil(im.count/step), V = pos.count, useCol = !!(im.instanceColor || col);
+  const Pa = new Float32Array(n*V*3), Na = new Float32Array(n*V*3), Ta = uv ? new Float32Array(n*V*2) : null, Ca = useCol ? new Float32Array(n*V*4) : null, Ia = idx ? new Uint32Array(n*idx.count) : null;
+  const m4 = new THREE.Matrix4(), nm = new THREE.Matrix3(), v = new THREE.Vector3(), c = new THREE.Color(1, 1, 1); let k = 0; im.updateMatrixWorld();
+  for (let i = 0; i < im.count; i += step, k++){ im.getMatrixAt(i, m4); m4.premultiply(im.matrixWorld); nm.getNormalMatrix(m4); if (im.instanceColor) im.getColorAt(i, c);
+    for (let j = 0; j < V; j++){ const o = (k*V + j)*3;
+      v.fromBufferAttribute(pos, j).applyMatrix4(m4); Pa[o] = v.x; Pa[o+1] = v.y; Pa[o+2] = v.z;
+      v.fromBufferAttribute(nor, j).applyMatrix3(nm).normalize(); Na[o] = v.x; Na[o+1] = v.y; Na[o+2] = v.z;
+      if (Ta){ Ta[(k*V + j)*2] = uv.getX(j); Ta[(k*V + j)*2 + 1] = uv.getY(j); }
+      if (Ca){ const q = (k*V + j)*4; Ca[q] = c.r*(col ? col.getX(j) : 1); Ca[q+1] = c.g*(col ? col.getY(j) : 1); Ca[q+2] = c.b*(col ? col.getZ(j) : 1); Ca[q+3] = 1; } }
+    if (Ia) for (let t = 0; t < idx.count; t++) Ia[k*idx.count + t] = idx.getX(t) + k*V; }
+  const out = new THREE.BufferGeometry(); out.setAttribute('position', new THREE.BufferAttribute(Pa, 3)); out.setAttribute('normal', new THREE.BufferAttribute(Na, 3));
+  if (Ta) out.setAttribute('uv', new THREE.BufferAttribute(Ta, 2)); if (Ca) out.setAttribute('color', new THREE.BufferAttribute(Ca, 4)); if (Ia) out.setIndex(new THREE.BufferAttribute(Ia, 1));
+  const mt = useCol && !im.material.vertexColors ? Object.assign(im.material.clone(), {vertexColors:true}) : im.material;
+  return new THREE.Mesh(out, mt);
+}
+function ptPatchShader(M){ // additions to the tracer's program; each is left out when the place it belongs to is not found. Returns what went in
+  let fs = M.fragmentShader; const has = a=>fs.split(a).length === 2, out = {leaves:false, both:false};
+  // one stray very bright path must not leave a white speck: each sample is capped
+  const cap = 'gl_FragColor.a *= opacity;'; if (PTO.clamp > 0 && has(cap)) fs = fs.replace(cap, `gl_FragColor.rgb = min( gl_FragColor.rgb, vec3( ${PTO.clamp.toFixed(1)} ) ); ` + cap);
+  // a leaf is lit from both sides: with the chance given as a negative "transmission", its far side is shaded instead of the near one (light that came through it)
+  const a1 = '// early out if this is a matte material', a2 = 'scatterRec = bsdfSample( - ray.direction, surf );', a3 = 'gl_FragColor.rgb += directLightContribution( - ray.direction, surf, state, hitPoint );', a4 = 'vec3 halfVector = normalize( - ray.direction + scatterRec.direction );';
+  if ([a1, a2, a3, a4].every(has) && fs.includes('getBasisFromNormal')){
+    fs = fs.replace(a1, 'float leafThrough = 0.0; if ( material.transmission < 0.0 ) { leafThrough = - material.transmission; material.transmission = 0.0; }\n' + a1)
+      .replace(a2, `vec3 viewDir = - ray.direction;
+        if ( leafThrough > rand( 18 ) ) {
+          viewDir = reflect( viewDir, surf.faceNormal ); surf.faceNormal = - surf.faceNormal; surf.normal = - surf.normal; surf.clearcoatNormal = - surf.clearcoatNormal;
+          surf.normalBasis = getBasisFromNormal( surf.normal ); surf.normalInvBasis = inverse( surf.normalBasis );
+          surf.clearcoatBasis = getBasisFromNormal( surf.clearcoatNormal ); surf.clearcoatInvBasis = inverse( surf.clearcoatBasis );
+          surf.color = pow( surf.color, vec3( ${PTO.leafTint.toFixed(2)} ) );
+        }
+        scatterRec = bsdfSample( viewDir, surf );`)
+      .replace(a3, 'gl_FragColor.rgb += directLightContribution( viewDir, surf, state, hitPoint );').replace(a4, 'vec3 halfVector = normalize( viewDir + scatterRec.direction );');
+    // and its shadow is not solid: part of the light that reaches a leaf goes on, tinted, to the leaves and the ground behind it (a crown drawn with a few thousand leaves stands for many more, with gaps between them)
+    const a5 = 'float transmissionFactor = ( 1.0 - metalness ) * transmission;';
+    if (has(a5)) fs = fs.replace(a5, `float transmissionFactor = ( 1.0 - metalness ) * ( transmission < 0.0 ? - transmission * ${PTO.leafShadow.toFixed(2)} : transmission );`);
+    out.leaves = true; }
+  // the tracer picks one lamp or the sky at each bounce; here the sky and every lamp (the sun is one) are asked every time, which takes most of the grain out of the shade and out of rooms
+  const b0 = 'LightRecord lightRec = randomLightSample( lights.tex, iesProfiles, lights.count, rayOrigin, rand3( 6 ) );', b1 = 'if( lightsDenom != 0.0 && rand( 5 ) < float( lights.count ) / lightsDenom ) {', b2 = '} else if ( envMapInfo.totalSum != 0.0 && environmentIntensity != 0.0 ) {', b3 = 'result = attenuatedColor * lightRec.emission', b4 = 'result = attenuatedColor * environmentIntensity', b5 = 'envPdf /= lightsDenom;';
+  const b6 = /lightsDenom =\s*\( environmentIntensity == 0\.0 \|\| envMapInfo\.totalSum == 0\.0 \) && lights\.count != 0u \?\s*float\( lights\.count \) :\s*float\( lights\.count \+ 1u \);/;
+  if ([b0, b1, b2, b3, b4].every(has) && fs.split(b5).length === 3 && b6.test(fs)){
+    fs = fs.replace(b1, 'vec3 lightR = rand3( 6 ); for ( uint li = 0u; li < lights.count; li ++ ) {').replace(b0, 'LightRecord lightRec = randomLightSample( lights.tex, iesProfiles, lights.count, rayOrigin, vec3( ( float( li ) + 0.5 ) / float( lights.count ), lightR.yz ) );').replace(b2, '} if ( envMapInfo.totalSum != 0.0 && environmentIntensity != 0.0 ) {')
+      .replace(b3, 'result += attenuatedColor * lightRec.emission').replace(b4, 'result += attenuatedColor * environmentIntensity').split(b5).join('').replace(b6, 'lightsDenom = 1.0;');
+    out.both = true; }
+  M.fragmentShader = fs; M.needsUpdate = true; return out;
+}
+/* The denoiser. A picture that is not finished is grainy; the grain is smoothed out along the surfaces, never across their
+   outlines: an ordinary drawing of the same view gives every pixel's own colour and distance (and from that the direction it
+   faces), and light is only shared between pixels that agree in those. The colour is taken out before smoothing and put
+   back after, so textures, leaves and blades stay sharp. The smoothing weakens as the samples add up. */
+let ptK = null;
+function ptKit(){ if (ptK) return ptK;
+  const mk = (uniforms, fragmentShader, extra)=>new FullScreenQuad(new THREE.ShaderMaterial(Object.assign({depthTest:false, depthWrite:false, blending:THREE.NoBlending, vertexShader:fsVert, uniforms, fragmentShader}, extra)));
+  const geo = mk({tDepth:{value:null}, projInv:{value:new THREE.Matrix4()}}, `uniform highp sampler2D tDepth; uniform mat4 projInv; varying vec2 vUv;
+    vec3 viewPos(vec2 uv, float d){ vec4 v = projInv * vec4(vec3(uv, d) * 2.0 - 1.0, 1.0); return v.xyz / v.w; }
+    void main(){ vec2 size = vec2(textureSize(tDepth, 0)); ivec2 p = ivec2(vUv * size);
+      float c0 = texelFetch(tDepth, p, 0).x; if (c0 >= 1.0){ gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0e5); return; }
+      float l2 = texelFetch(tDepth, p - ivec2(2, 0), 0).x, l1 = texelFetch(tDepth, p - ivec2(1, 0), 0).x, r1 = texelFetch(tDepth, p + ivec2(1, 0), 0).x, r2 = texelFetch(tDepth, p + ivec2(2, 0), 0).x;
+      float b2 = texelFetch(tDepth, p - ivec2(0, 2), 0).x, b1 = texelFetch(tDepth, p - ivec2(0, 1), 0).x, t1 = texelFetch(tDepth, p + ivec2(0, 1), 0).x, t2 = texelFetch(tDepth, p + ivec2(0, 2), 0).x;
+      float dl = abs((2.0 * l1 - l2) - c0), dr = abs((2.0 * r1 - r2) - c0), db = abs((2.0 * b1 - b2) - c0), dt = abs((2.0 * t1 - t2) - c0);
+      vec3 ce = viewPos(vUv, c0);
+      vec3 dpdx = (dl < dr) ? ce - viewPos(vUv - vec2(1.0 / size.x, 0.0), l1) : viewPos(vUv + vec2(1.0 / size.x, 0.0), r1) - ce;
+      vec3 dpdy = (db < dt) ? ce - viewPos(vUv - vec2(0.0, 1.0 / size.y), b1) : viewPos(vUv + vec2(0.0, 1.0 / size.y), t1) - ce;
+      gl_FragColor = vec4(normalize(cross(dpdx, dpdy)), -ce.z); }`);
+  const filter = mk({tIn:{value:null}, tAlb:{value:null}, tGeo:{value:null}, px:{value:new THREE.Vector2()}, stepW:{value:1}, first:{value:1}, last:{value:0}, tol:{value:.4}, speck:{value:3}, relax:{value:0}}, `uniform sampler2D tIn; uniform sampler2D tAlb; uniform sampler2D tGeo; uniform vec2 px; uniform float stepW; uniform float first; uniform float last; uniform float tol; uniform float speck; uniform float relax; varying vec2 vUv;
+    const vec3 LUM = vec3(0.2126, 0.7152, 0.0722);
+    vec3 light(vec2 uv, vec4 a){ vec3 c = texture2D(tIn, uv).rgb; return (first > 0.5 && a.a >= 0.5) ? c / max(a.rgb, vec3(0.03)) : c; }   // the surface's own colour taken out
+    void main(){ vec4 A = texture2D(tAlb, vUv); vec3 c0 = light(vUv, A);
+      if (A.a < 0.5){ gl_FragColor = vec4(c0, 1.0); return; }                      // sky, glass, water: left as traced
+      vec4 G = texture2D(tGeo, vUv);
+      if (first > 0.5){ vec3 m = vec3(0.0); float n = 0.0;                        // a lone pixel far brighter than all around it is a stray path: pulled down first
+        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++){ if (i == 0 && j == 0) continue; vec2 uv = vUv + vec2(float(i), float(j)) * px;
+          vec4 Aq = texture2D(tAlb, uv); if (Aq.a < 0.5 || abs(texture2D(tGeo, uv).w - G.w) > 0.05 * G.w) continue; m += light(uv, Aq); n += 1.0; }
+        if (n > 2.5){ float lm = dot(m / n, LUM) * speck + 0.1, lc = dot(c0, LUM); if (lc > lm) c0 *= lm / lc; } }
+      float l0 = dot(c0, LUM); vec3 sum = c0, sumG = vec3(0.0); float wsum = 1.0, wG = 0.0;
+      for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++){ if (i == 0 && j == 0) continue;
+        vec2 uv = vUv + vec2(float(i), float(j)) * px * stepW; vec4 Aq = texture2D(tAlb, uv); if (Aq.a < 0.5) continue;
+        vec4 Gq = texture2D(tGeo, uv); vec3 cq = light(uv, Aq), da = A.rgb - Aq.rgb;
+        float k = (i == 0 ? 1.0 : (i == 1 || i == -1) ? 0.667 : 0.167) * (j == 0 ? 1.0 : (j == 1 || j == -1) ? 0.667 : 0.167);
+        float g = k * exp(-abs(G.w - Gq.w) / (0.012 * G.w * stepW + 0.003)) * pow(max(dot(G.xyz, Gq.xyz), 0.0), 16.0) * exp(-dot(da, da) / 0.02);   // same surface?
+        float w = g * exp(-abs(l0 - dot(cq, LUM)) / (tol * (l0 + 0.04)));                                                                              // and lit alike?
+        sum += cq * w; wsum += w; sumG += cq * g; wG += g; }
+      vec3 c = sum / wsum;
+      // a pixel that found no neighbour lit like itself is, while the picture is young, most likely grain (or sits on an outline, half one thing and half another): it takes the light of its own surface around it
+      if (last > 0.5 && relax > 0.0 && wG > 0.5) c = mix(c, sumG / wG, relax * (1.0 - smoothstep(0.3, 1.0, wsum - 1.0)));
+      if (last > 0.5) c *= max(A.rgb, vec3(0.03));           // the colour goes back in after the last round
+      gl_FragColor = vec4(c, 1.0); }`);
+  const show = mk({tIn:{value:null}}, `uniform sampler2D tIn; varying vec2 vUv;
+    void main(){ gl_FragColor = vec4(texture2D(tIn, vUv).rgb, 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`, {toneMapped:true});
+  const meter = mk({tIn:{value:null}}, `uniform sampler2D tIn; varying vec2 vUv;
+    void main(){ float l = 0.0; for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) l += min(dot(texture2D(tIn, vUv + (vec2(float(i), float(j)) - 1.5) / vec2(256.0, 160.0)).rgb, vec3(0.2126, 0.7152, 0.0722)), 1.5);
+      gl_FragColor = vec4(sqrt(l / 24.0), 0.0, 0.0, 1.0); }`);
+  const meterRT = new THREE.WebGLRenderTarget(64, 40, {depthBuffer:false});
+  return ptK = {geo, filter, show, meter, meterRT};
+}
+function ptMeter(tex){ // the picture's brightness as a camera meters it: the average over the frame, the middle counting more, bright windows capped
+  const K = ptKit(), prev = renderer.getRenderTarget(), px = new Uint8Array(64*40*4); K.meter.material.uniforms.tIn.value = tex;
+  renderer.setRenderTarget(K.meterRT); K.meter.render(renderer); renderer.readRenderTargetPixels(K.meterRT, 0, 0, 64, 40, px); renderer.setRenderTarget(prev);
+  let sum = 0, wsum = 0; for (let y = 0; y < 40; y++) for (let x = 0; x < 64; x++){ const w = 1.5 - Math.hypot((x - 31.5)/32, (y - 19.5)/20); const v = px[(y*64 + x)*4]/255; sum += w*v*v*1.5; wsum += w; }
+  return sum/wsum;
+}
+function ptGuides(w, h){ // every surface's own colour (alpha 0: nothing to smooth here) and its distance, drawn by the ordinary renderer from the camera of the photo
+  const rt = new THREE.WebGLRenderTarget(w, h, {type:THREE.HalfFloatType, minFilter:THREE.NearestFilter, magFilter:THREE.NearestFilter, depthTexture:new THREE.DepthTexture(w, h)});
+  const amb = new THREE.AmbientLight(0xffffff, Math.PI), undo = [], set = (o, k, v)=>{ const old = o[k]; o[k] = v; undo.push(()=>{ o[k] = old; }); };
+  const mask = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0, blending:THREE.NoBlending}), seen = new Set();
+  scene.traverseVisible(m=>{ if (!m.isMesh || Array.isArray(m.material)) return; const x = m.material;
+    if (x.transmission > 0 && x.thickness === 0){ set(m, 'visible', false); return; }                 // a window pane: what lies behind it is smoothed like anything else
+    if (x.transmission > 0 || (x.transparent && x.opacity < .99)){ set(m, 'material', mask); return; }
+    if (!seen.has(x)){ seen.add(x); if ('envMapIntensity' in x) set(x, 'envMapIntensity', 0); } });
+  // flat light only: no sun, no sky; the plants stand still, as the tracer sees them
+  set(sun, 'intensity', 0); set(hemi, 'intensity', 0); set(windU.uWind, 'value', -.2/1.8); set(windU.uAoOn, 'value', 0);
+  if (scene.fog){ if (scene.fog.isFogExp2) set(scene.fog, 'density', 0); else { set(scene.fog, 'near', 1e7); set(scene.fog, 'far', 1e8); } }
+  set(scene, 'background', null); scene.add(amb);
+  const prevRT = renderer.getRenderTarget(), cc = renderer.getClearColor(new THREE.Color()), ca = renderer.getClearAlpha();
+  try { renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(scene, persp); }
+  finally { renderer.setRenderTarget(prevRT); renderer.setClearColor(cc, ca); scene.remove(amb); for (let i = undo.length - 1; i >= 0; i--) undo[i](); mask.dispose(); }
+  return rt;
+}
+function ptDenoiser(w, h, guide){
+  const K = ptKit(), mk = f=>new THREE.WebGLRenderTarget(w, h, {type:THREE.HalfFloatType, minFilter:f, magFilter:f, depthBuffer:false});
+  const geo = mk(THREE.NearestFilter), A = mk(THREE.NearestFilter), B = mk(THREE.NearestFilter), C = mk(THREE.LinearFilter), prev = renderer.getRenderTarget();
+  K.geo.material.uniforms.tDepth.value = guide.depthTexture; K.geo.material.uniforms.projInv.value.copy(persp.projectionMatrixInverse);
+  renderer.setRenderTarget(geo); K.geo.render(renderer); renderer.setRenderTarget(prev);
+  return { C, at:-1,
+    run(src, spp){ const U = K.filter.material.uniforms, rounds = spp < 12 ? 5 : spp < 48 ? 4 : spp < 160 ? 3 : 2, prevRT = renderer.getRenderTarget();
+      U.tAlb.value = guide.texture; U.tGeo.value = geo.texture; U.px.value.set(1/w, 1/h); U.tol.value = PTO.denoise*.5*THREE.MathUtils.clamp(Math.sqrt(32/spp), .3, 3); U.speck.value = 3 + 16/spp; U.relax.value = THREE.MathUtils.clamp(1.5 - spp/48, 0, 1);   // early on nearly every pixel is a lone bright one: little is pulled down then
+      let from = src;
+      for (let i = 0; i < rounds; i++){ const to = i === rounds - 1 ? C : (i % 2 ? B : A); U.tIn.value = from; U.stepW.value = 1 << i; U.first.value = i === 0 ? 1 : 0; U.last.value = i === rounds - 1 ? 1 : 0;
+        renderer.setRenderTarget(to); K.filter.render(renderer); from = to.texture; }
+      renderer.setRenderTarget(prevRT); },
+    dispose(){ for (const t of [guide, geo, A, B, C]) t.dispose(); guide.depthTexture?.dispose(); } };
+}
+function ptSplit(m){ // a mesh with several materials as one mesh per material: the tracer knows one material per mesh, and a mesh with more shifts every mesh after it onto a wrong one
+  const g = m.geometry, by = new Map(), out = [];
+  for (const gr of g.groups){ const mt = m.material[gr.materialIndex]; if (!mt) continue; let L = by.get(mt); if (!L){ L = []; by.set(mt, L); } L.push(gr); }
+  const total = g.index ? g.index.count : g.attributes.position.count;
+  for (const [mt, L] of by){ const n = L.reduce((a, gr)=>a + Math.max(0, Math.min(gr.count, total - gr.start)), 0), idx = new Uint32Array(n); let k = 0;
+    for (const gr of L) for (let i = gr.start, e = Math.min(gr.start + gr.count, total); i < e; i++) idx[k++] = g.index ? g.index.getX(i) : i;
+    const sub = new THREE.BufferGeometry(); for (const name in g.attributes) sub.setAttribute(name, g.attributes[name]); sub.setIndex(new THREE.BufferAttribute(idx, 1));
+    const mm = new THREE.Mesh(sub, mt); mm.matrixAutoUpdate = false; mm.matrix.copy(m.matrixWorld); out.push(mm); }
+  return out;
+}
+function ptSnow(meshes, cover){ // snow lies on what faces up: the live view paints it on in its shaders, the tracer gets a thin white skin there (not under the roof)
+  const P = [], N = [], thr = THREE.MathUtils.lerp(.99, .62, Math.min(1, cover*1.35)), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3(), e = new THREE.Vector3();
+  for (const m of meshes){ const g = m.geometry, pos = g.attributes.position, x = m.material; if (!pos || !x.userData || !x.userData.snowed || x.userData.wind || x.transmission > 0) continue;
+    const idx = g.index, cnt = idx ? idx.count : pos.count, W = m.matrixWorld, flip = W.determinant() < 0 ? -1 : 1; if (cnt > 600000) continue;
+    for (let t = 0; t + 2 < cnt; t += 3){ a.fromBufferAttribute(pos, idx ? idx.getX(t) : t).applyMatrix4(W); b.fromBufferAttribute(pos, idx ? idx.getX(t+1) : t+1).applyMatrix4(W); c.fromBufferAttribute(pos, idx ? idx.getX(t+2) : t+2).applyMatrix4(W);
+      n.subVectors(b, a).cross(e.subVectors(c, a)); const l = n.length(); if (l < 1e-9) continue; n.multiplyScalar(flip/l); if (n.y < thr) continue;
+      const cx = (a.x + b.x + c.x)/3, cy = (a.y + b.y + c.y)/3, cz = (a.z + b.z + c.z)/3;
+      if (cy < 5.5 && pip([cx, cz], GF_POLY) && (cy < 2.9 || pip([cx, cz], UF_POLY))) continue;                    // indoors
+      for (const v of [a, b, c]){ P.push(v.x + n.x*.008, v.y + n.y*.008 + .004, v.z + n.z*.008); N.push(n.x, n.y, n.z); } } }
+  if (!P.length) return null;
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+  return new THREE.Mesh(g, new THREE.MeshStandardMaterial({color:new THREE.Color(.93, .95, .98), roughness:.9}));
+}
+function ptPrepare(leaves){ // returns the function that puts the live scene back
+  const undo = [], temp = [], tempMats = [];
+  const set = (o, k, v)=>{ const had = k in o, old = o[k]; if (old === v) return; o[k] = v; undo.push(()=>{ if (had) o[k] = old; else delete o[k]; }); };
+  const hide = o=>{ if (o && o.visible) set(o, 'visible', false); };
+  batchesOff(); batches.dirty = true;                               // the objects themselves, not their stand-ins
+  // everything a photo should show, also what the live view leaves out to stay fast (the small things indoors)
+  for (const o of state.objects){ const g = meshById.get(o.id); if (!g) continue; const r = objRule(o);
+    set(g, 'visible', shownObj(o) && !((r & 4) && ui.cut==='gf') && !((r & 8) && !walk.on && ui.cut===((r & 4) ? 'uf' : 'gf'))); }
+  for (const m of furniture) set(m, 'visible', ui.layers.furniture !== false);
+  // denser grass for the photo
+  let regrass = false;
+  if (ui.layers.grass !== false && LEVELS && PTO.grass > Q().grass){ const q0 = qName; QUALITY.photo = Object.assign({}, Q(), {grass:PTO.grass}); qName = 'photo'; try { buildGrass(); } finally { qName = q0; } clearTimeout(grassTimer); regrass = true; }
+  // what the tracer must not see: helpers, the sky dome (the sky is its light instead), stand-ins, pictures drawn by shaders
+  for (const o of [sky, clouds, selBox, plotLineGroup, measureGroup, brushRing, envGround, flakes]) hide(o);
+  if (nb.ready){ for (const m of nb.im.flat()) hide(m); hide(nb.imp); }
+  const isGlass = x=>x === mat.glass || (x.transparent && x.opacity < .6 && x.roughness < .2);
+  const out = [], inst = [], keep = [], extra = new THREE.Group();
+  scene.traverseVisible(m=>{ if (!m.isMesh) return; const L = Array.isArray(m.material) ? m.material : [m.material];
+    if (!m.layers.test(persp.layers) || L.some(x=>!x || x.visible === false || x.colorWrite === false || x.isShaderMaterial || x.isMeshBasicMaterial || (x.transparent && x.depthWrite === false && !isGlass(x)))){ out.push(m); return; }
+    if (m.isInstancedMesh){ out.push(m); if (m.count > 0) inst.push(m); return; }
+    if (Array.isArray(m.material)){ out.push(m); m.updateMatrixWorld(); for (const part of ptSplit(m)){ extra.add(part); keep.push(part); } return; }
+    keep.push(m); });
+  for (const m of out) hide(m);
+  // materials: real glass and water; leaves and blades let light through; no mirror pictures of the live view
+  const ptGlass = new THREE.MeshPhysicalMaterial({color:0xf2f8f6, roughness:0, metalness:0, transmission:1, ior:1.5, thickness:0, side:THREE.DoubleSide});
+  const ptWater = makeWater(2, false), ptPond = makeWater(2, true); tempMats.push(ptGlass, ptWater, ptPond);
+  const swap = x=>x === mat.water ? ptWater : x === mat.pond ? ptPond : isGlass(x) ? ptGlass : x, seen = new Set();
+  for (const m of keep){ const x = swap(m.material); if (x !== m.material) set(m, 'material', x); if (seen.has(x)) continue; seen.add(x);
+    if (x.envMap) set(x, 'envMap', null);
+    const wk = x.userData && x.userData.wind; if (wk && !x.transparent){ const t = wk === 'grass' ? PTO.grassT : PTO.leafT; if (t > 0 && leaves) set(x, 'transmission', -t);   // negative: the mark for "lit from both sides" (see ptPatchShader)
+      if (PTO.foliage !== 1) set(x, 'color', x.color.clone().multiplyScalar(PTO.foliage)); } }
+  // what the tracer needs made for it: instanced things as plain meshes, every neighbouring house, the snow
+  const add = m=>{ if (m){ extra.add(m); temp.push(m); } };
+  for (const im of inst){ const m = ptExpand(im); if (m && m.material !== im.material) tempMats.push(m.material); add(m); }
+  if (nb.ready && cityGroup.visible){ const c = persp.position, lists = [[], [], []];
+    for (const h of nb.houses){ if (h.c.distanceTo(c) < 130){ lists[0].push(nb.im[0][h.mir].geometry.clone().applyMatrix4(h.m4)); lists[1].push(nb.im[1][h.mir].geometry.clone().applyMatrix4(h.m4)); } else lists[2].push(nb.lod1[h.mir].clone().applyMatrix4(h.m4)); }
+    lists.forEach((geos, i)=>{ if (!geos.length) return; const merged = mergeGeometries(geos, false); for (const g of geos) g.dispose(); if (merged) add(new THREE.Mesh(merged, nb.im[i][0].material)); }); }
+  if (snowU.uSnow.value > .05){ const sm = ptSnow(keep.concat(extra.children.filter(m=>temp.includes(m))), snowU.uSnow.value); if (sm){ tempMats.push(sm.material); add(sm); } }
+  scene.add(extra);
+  // the tracer pads meshes without vertex colours with RGBA colours, so RGB ones are widened to match while it reads the scene
+  const rgb = new Map();
+  scene.traverseVisible(m=>{ const g = m.isMesh && m.geometry, c = g && g.attributes.color; if (!c || c.itemSize !== 3 || rgb.has(g)) return;
+    const a = new Float32Array(c.count*4); for (let i = 0; i < c.count; i++){ a[i*4] = c.getX(i); a[i*4+1] = c.getY(i); a[i*4+2] = c.getZ(i); a[i*4+3] = 1; }
+    rgb.set(g, c); g.setAttribute('color', new THREE.BufferAttribute(a, 4)); });
+  return ()=>{ for (const [g, c] of rgb) g.setAttribute('color', c);
+    for (let i = undo.length - 1; i >= 0; i--) undo[i]();
+    scene.remove(extra); for (const m of temp) m.geometry.dispose(); for (const m of tempMats) m.dispose();
+    if (regrass) buildGrass(); applySmall(); };
+}
+function ptDispose(pt){ // the tracer's own dispose misses most of what it holds
+  const M = pt._pathTracer && pt._pathTracer.material;
+  for (const f of [()=>pt._quad.material.dispose(), ()=>pt._quad.dispose(), ()=>pt._lowResPathTracer.dispose(), ()=>pt._pathTracer.dispose(),
+    ()=>M.bvh.dispose(), ()=>M.attributesArray.dispose(), ()=>M.materialIndexAttribute.dispose(), ()=>M.textures.dispose(), ()=>M.materials.dispose(), ()=>M.lights.tex.dispose(),
+    ()=>M.iesProfiles.dispose(), ()=>M.envMapInfo.dispose(), ()=>M.dispose(), ()=>pt._colorBackground && pt._colorBackground.dispose()]){ try { f(); } catch(e){} }
+}
 async function startPathTrace(){
   stopPhoto();
-  if (camera!==persp) return;
+  if (camera!==persp){ setStatus('Photo works in the 3D views. Switch to Aerial, Garden, Street or Walk first.'); return; }
   photoBtn.setAttribute('aria-pressed','true'); setStatus('Loading the path tracer…');
   // the path tracer reads Scene.backgroundRotation / environmentRotation, which arrived in three r162
   if (!THREE.Scene.prototype.backgroundRotation){ THREE.Scene.prototype.backgroundRotation = new THREE.Euler(); THREE.Scene.prototype.environmentRotation = new THREE.Euler(); }
   let PT; try { PT = await import('three-gpu-pathtracer'); } catch(e){ photoBtn.setAttribute('aria-pressed','false'); setStatus('The path tracer could not load: '+e.message); return; }
-  setStatus('Preparing the scene for path tracing…'); await new Promise(r=>setTimeout(r,40));
-  batchesOff(); batches.dirty = true;                               // the path tracer reads every mesh in the scene: the objects themselves, not their stand-ins
-  // grass blades and clouds are left out: millions of thin triangles only add noise here
-  const hidden = [sky, clouds, selBox, plotLineGroup, measureGroup, grassGroup, fences].filter(o=>o.visible); hidden.forEach(o=>o.visible=false);
-  const env = new PT.GradientEquirectTexture(512);
-  env.topColor.copy(sky.material.uniforms.top.value); env.bottomColor.copy(sky.material.uniforms.horizon.value); env.exponent = 1.6; env.update();
-  const prev = {bg:scene.background, fog:scene.fog, lawn:mat.lawn.color.clone()};
-  mat.lawn.color.setHex(SEASON[ui.season].lawn);
-  scene.environment = env; scene.background = env; scene.fog = null;
+  setStatus('Preparing the photo: sky, grass, leaves…'); await new Promise(r=>setTimeout(r, 60));
+  if (photo) return;                                                 // something else started meanwhile
+  const hidden = [selBox, measureGroup].filter(o=>o.visible); hidden.forEach(o=>o.visible=false);
+  setRenderScale(1); const prevPR = renderer.getPixelRatio(); renderer.setPixelRatio(Math.min(2, Math.max(prevPR, devicePixelRatio))); resize();
+  let pt = null, env = null, dn = null;
   try {
-    const pt = new PT.WebGLPathTracer(renderer);
-    pt.minSamples = 3; pt.fadeDuration = 400; pt.renderScale = Math.min(1, 1/renderer.getPixelRatio()); pt.tiles.set(3,3);
-    pt.dynamicLowRes = true; if ('filterGlossyFactor' in pt) pt.filterGlossyFactor = .5;
-    // the path tracer pads meshes without vertex colours with RGBA colours, so RGB ones are widened to match while it reads the scene
-    nbForPhotoPT(true);
-    const rgb = new Map();
-    scene.traverse(m=>{ const g = m.isMesh && m.visible && m.geometry, c = g && g.attributes.color; if (!c || c.itemSize!==3 || rgb.has(g)) return;
-      const a = new Float32Array(c.count*4); for (let i=0;i<c.count;i++){ a[i*4]=c.getX(i); a[i*4+1]=c.getY(i); a[i*4+2]=c.getZ(i); a[i*4+3]=1; }
-      rgb.set(g, c); g.setAttribute('color', new THREE.BufferAttribute(a, 4)); });
-    try { pt.setScene(scene, persp); } finally { for (const [g, c] of rgb) g.setAttribute('color', c); }
-    photo = {kind:'pt', pt, env, hidden, prev};
+    pt = new PT.WebGLPathTracer(renderer);
+    pt.renderScale = Math.min(1, Math.sqrt(PTO.maxPixels/(renderer.domElement.width*renderer.domElement.height)));
+    pt.bounces = PTO.bounces; pt.transmissiveBounces = 24; pt.filterGlossyFactor = .5; pt.textureSize.set(PTO.texture, PTO.texture);
+    pt.minSamples = 1; pt.fadeDuration = 0; pt.renderDelay = 0; pt.dynamicLowRes = true; pt.lowResScale = .25; pt.tiles.set(2, 2);
+    const feat = ptPatchShader(pt._pathTracer.material);
+    env = ptSkyTexture(!feat.both);
+    const tA = performance.now(), restore = ptPrepare(feat.leaves), tB = performance.now();
+    try {
+      if (PTO.denoise > 0){ const w = Math.floor(pt.renderScale*renderer.domElement.width), h = Math.floor(pt.renderScale*renderer.domElement.height); dn = ptDenoiser(w, h, ptGuides(w, h)); }
+      // the tracer's light: the sky all around, and the sun as a far, small, very bright disc of its own
+      const keep = [scene.environment, scene.background, scene.fog, sun.visible]; let sunL = null;
+      scene.environment = env; scene.background = env; scene.fog = null; sun.visible = false;
+      if (feat.both && keep[3] && sun.intensity > 0){ const D = 20000, R = D*Math.tan(PTO.sunRadius*Math.PI/180), dir = sun.position.clone().sub(sun.target.position).normalize();
+        sunL = new PT.ShapedAreaLight(sun.color, sun.intensity*D*D/(Math.PI*R*R), 2*R, 2*R); sunL.isCircular = true; sunL.position.copy(sun.target.position).addScaledVector(dir, D); sunL.lookAt(sun.target.position); scene.add(sunL); }
+      // indoors the lights are on: a soft light under the ceiling of the room, and one under each ceiling panel with LED strips near by
+      const lamps = [];
+      if (feat.both && walk.on && walk.inside && PTO.lamp > 0){ const r = walk.room, lamp = (x, y, z, w, d, k, up)=>{ const L = new PT.ShapedAreaLight(0xfff0dc, PTO.lamp*k, w, d); L.position.set(x, y, z); L.rotation.x = up ? Math.PI/2 : -Math.PI/2; scene.add(L); lamps.push(L); };
+        if (r){ const xs = r.p.map(q=>q[0]), ys = r.p.map(q=>q[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), base = (r.f ? 3.17 : 0) + (r.y || 0);
+          const w = Math.max(.8, (x1 - x0)*.5), d = Math.max(.8, (y1 - y0)*.5); lamp((x0 + x1)/2, base + 2.78, (y0 + y1)/2, w, d, 1); lamp((x0 + x1)/2, base + 2.79, (y0 + y1)/2, w, d, .22, true); }   // down into the room, and a little up onto the ceiling
+        const near = state.objects.filter(o=>o.type === 'ceiling' && (o.p.leds || 0) > 0 && meshById.get(o.id)?.visible).map(o=>({o, d:Math.hypot(o.x - persp.position.x, o.y - persp.position.z)})).filter(e=>e.d < 9).sort((a, b)=>a.d - b.d).slice(0, 2);
+        for (const {o} of near){ const g = meshById.get(o.id), q = new THREE.Vector3(0, 2.845 - (o.p.h || .02) - .03, 0).applyMatrix4(g.matrixWorld), rot = ((o.rot || 0) % 180 + 180) % 180, sw = rot > 45 && rot < 135;
+          lamp(q.x, q.y, q.z, Math.max(.3, ((sw ? o.p.d : o.p.w) || 2)*.9), Math.max(.3, ((sw ? o.p.w : o.p.d) || 2)*.9), 1.5); } }
+      try { pt.setScene(scene, persp); } finally { [scene.environment, scene.background, scene.fog, sun.visible] = keep; if (sunL) scene.remove(sunL); for (const L of lamps) scene.remove(L); }
+    } finally { restore(); shadowDirty = true; }
+    if (PTO.log){ const G = pt._generator.geometry, M = pt._materials; console.log('PT scene:', Math.round(tB - tA), 'ms to prepare,', Math.round(performance.now() - tB), 'ms to read;', Math.round((G.index ? G.index.count : G.attributes.position.count)/3000) + 'k triangles,', Math.round(G.attributes.position.count/1000) + 'k vertices,', M.length, 'material slots,', new Set(M).size, 'materials;', JSON.stringify(feat)); }
+    const P = photo = {kind:'pt', pt, env, dn, hidden, prevPR, t0:performance.now(), done:false, exposure:PTO.exposure, indoor:walk.on && walk.inside, metered:0};
+    pt.renderToCanvasCallback = (target)=>{ const K = ptKit(), n = Math.floor(pt.samples + 1e-3), r = renderer; let src = target.texture;
+      if (dn && PTO.denoise > 0){ if (n >= 1 && dn.at !== n){ dn.run(target.texture, n); dn.at = n; } if (dn.at >= 1) src = dn.C.texture; }
+      // indoors the exposure follows the picture, as a camera's would (outdoors it stays put, so that evening stays evening); it settles within the first samples
+      if (P.indoor && n >= 1 && n !== P.metered && (n <= 2 || n === 4 || n === 8 || n === 16)){ P.metered = n; const lum = ptMeter(target.texture); if (lum > 0) P.exposure = THREE.MathUtils.clamp(PTO.key/lum, 1, 40); if (PTO.log) console.log('PT meter:', n, lum.toFixed(4), P.exposure.toFixed(2)); }
+      const ac = r.autoClear, ex = r.toneMappingExposure; r.autoClear = false; r.toneMappingExposure = ex*P.exposure; K.show.material.uniforms.tIn.value = src;
+      try { K.show.render(r); } finally { r.toneMappingExposure = ex; r.autoClear = ac; } };
   } catch(e){
-    scene.environment = envRT ? envRT.texture : null; scene.background = prev.bg; scene.fog = prev.fog; mat.lawn.color.copy(prev.lawn); hidden.forEach(o=>o.visible=true); env.dispose(); nbForPhotoPT(false);
+    if (pt) ptDispose(pt); if (env) env.dispose(); if (dn) dn.dispose(); hidden.forEach(o=>o.visible=true); renderer.setPixelRatio(prevPR); resize(); envDirty = true; shadowDirty = true;
     console.error(e); photoBtn.setAttribute('aria-pressed','false'); setStatus('Path tracing is not supported on this device: '+e.message); return;
   }
   photoCommon();
+}
+function ptFrame(){ const P = photo, pt = P.pt, now = performance.now();
+  if (!P.done && pt.samples >= PTO.samples){ P.done = true; pt.pausePathTracing = true; }
+  if (!P.done && !pt.isCompiling && pt.samples > 0){ // the work per frame follows the graphics card: smaller tiles when frames get long, larger ones when there is time to spare
+    if (P.tPrev){ P.ms = P.ms ? P.ms*.8 + (now - P.tPrev)*.2 : now - P.tPrev; P.nf = (P.nf || 0) + 1;
+      if (P.nf >= 10){ P.nf = 0; const t = pt.tiles.x; if (P.ms > 90 && t < 8) pt.tiles.set(t + 1, t + 1); else if (P.ms < 24 && t > 1) pt.tiles.set(t - 1, t - 1); } }
+    P.tPrev = now; }
+  pt.renderSample();
+}
+function ptStatus(){ const P = photo, pt = P.pt, n = Math.floor(pt.samples);
+  if (P.done) return 'Photo ready · path traced · Save image to download · click the view to leave';
+  if (pt.isCompiling) return 'Path tracing · getting the tracer ready (the first time can take a minute)…';
+  if (!P.t1 && n >= 1){ P.t1 = performance.now(); P.n1 = pt.samples; }
+  const left = P.t1 && pt.samples > P.n1 + 1 ? (PTO.samples - pt.samples)*(performance.now() - P.t1)/(pt.samples - P.n1)/1000 : null;
+  return `Path tracing · ${n} of ${PTO.samples} samples` + (left !== null ? ` · about ${left > 90 ? Math.round(left/60) + ' min' : Math.max(1, Math.round(left/5)*5) + ' s'} left` : '') + ' · Save image works at any time';
 }
 function stopPhoto(){
   if (!photo) return;
@@ -4431,9 +4721,8 @@ function stopPhoto(){
     renderer.setPixelRatio(P.prevPR); if (P.prevShadow !== sun.shadow.mapSize.x){ sun.shadow.mapSize.set(P.prevShadow, P.prevShadow); sun.shadow.map?.dispose(); sun.shadow.map = null; }
     resize();
   } else {
-    try { P.pt.dispose(); } catch(e){}
-    P.env.dispose(); P.hidden.forEach(o=>o.visible=true); mat.lawn.color.copy(P.prev.lawn); nbForPhotoPT(false);
-    scene.environment = envRT ? envRT.texture : null; scene.background = P.prev.bg; scene.fog = P.prev.fog; envDirty = true;
+    ptDispose(P.pt); P.env.dispose(); P.dn?.dispose(); P.hidden.forEach(o=>o.visible=true);
+    renderer.setPixelRatio(P.prevPR); resize(); envDirty = true;
   }
   labelsEl.hidden = false; photoBar.hidden = true; photoBtn.setAttribute('aria-pressed','false');
   if (walk.on) document.getElementById('walkpad').hidden = false;
@@ -5171,7 +5460,7 @@ function updateFall(dt, now){
 }
 
 function renderFrame(){
-  if (photo){ if (photo.kind==='pt') photo.pt.renderSample(); else accumStep(); return; }
+  if (photo){ if (photo.kind==='pt') ptFrame(); else accumStep(); return; }
   if (composer) renderComposer(); else renderer.render(scene, camera);
 }
 function renderComposer(){ // leaves and grass put their share of ambient occlusion into the alpha channel only while the pass that reads it runs; everywhere else alpha stays 1
@@ -5277,7 +5566,8 @@ function resize(){
   const s = 17; ortho.left=-s*w/h; ortho.right=s*w/h; ortho.top=s; ortho.bottom=-s; ortho.updateProjectionMatrix();
   if (composer && (composer._width !== w || composer._height !== h || composer._pixelRatio !== pr)){ composer._pixelRatio = pr; composer.setSize(w, h); }
 }
-addEventListener('resize', resize);
+let ptResizeT = null;
+addEventListener('resize', ()=>{ resize(); if (photo?.kind === 'pt'){ clearTimeout(ptResizeT); ptResizeT = setTimeout(()=>{ if (photo?.kind === 'pt') startPathTrace(); }, 500); } });
 let last = performance.now();
 function loop(now){
   frameNo++;
@@ -5297,7 +5587,7 @@ function loop(now){
   if (!photo){ updateBatches(); scheduleShadows(now, moving); schedulePost(moving); scheduleResolution(moving, frameMs); updateNeighbours(); }
   renderFrame();
   if (photo && now-photoStatusT > 250){ photoStatusT = now;
-    if (photo.kind==='pt') setStatus(`Path tracing (beta) · ${Math.floor(photo.pt.samples)} samples · grain clears over time · click the view to leave`);
+    if (photo.kind==='pt') setStatus(ptStatus());
     else setStatus(photo.n < PHOTO_SAMPLES ? `Rendering photo · ${Math.round(photo.n/PHOTO_SAMPLES*100)} %` : 'Photo ready · Save image to download · click the view to leave'); }
   updateLabels(); updateCompass();
   requestAnimationFrame(loop);

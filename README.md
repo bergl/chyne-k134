@@ -27,7 +27,14 @@ Interactive 3D model of house K-134 (Premonstrátů 1000, Chýně) and its garde
   - The 65″ Samsung QE65S90C TV (1444.9 × 829.6 × 39.9 mm, no stand) hangs on the wall; dragged TVs snap flat onto the nearest wall.
   - Small fittings are drawn only when you are inside or the house is cut open, so the garden views stay fast.
   - In the cut-away views, upper-floor furniture goes with the upper floor and ceiling panels are left out, so the rooms can be seen from above.
-- **Photo mode:** progressive accumulation of jittered frames (anti-aliasing and soft sun shadows); experimental path tracing with three-gpu-pathtracer.
+- **Photo mode:** progressive accumulation of jittered frames (anti-aliasing and soft sun shadows).
+- **Path trace (beta):** a physically based photo of the current view, traced with three-gpu-pathtracer. It takes a few minutes and clears as it goes; Save image works at any time.
+  - **Light:** the live sky with its clouds lights the scene, and the sun is a small, very bright disc, so shadows get soft edges. Light bounces between surfaces; glass and water refract and reflect.
+  - **Plants:** the lawn gets several times more blades than the live view. Leaves and blades are lit from both sides, so backlit foliage glows, and part of the light passes on through a crown.
+  - **Indoors:** the lights are on (a soft light under the room's ceiling and one under each nearby LED ceiling panel) and the exposure follows the picture like a camera's.
+  - **Denoiser:** an ordinary drawing of the same view gives each pixel's own colour, distance and facing. Grain is smoothed along surfaces only, never across outlines, and the surface colour is taken out first, so textures, leaves and blades stay sharp. The smoothing weakens as samples add up.
+  - Everything a photo should show is included: all neighbouring houses, fences, pebbles, leaf piles, small things indoors, and snow in winter.
+  - The live scene is put back exactly as it was when you leave. Phones get a smaller picture and lighter grass to fit their memory.
 - **Performance:**
   - **Loading:** a loading note with a progress bar shows while the model is built. The shader programs the first frame needs are compiled in the background (in parallel where the browser supports it) before the first frame; ambient occlusion and anti-aliasing compile after it and switch on when ready. The 3D engine is preloaded and minified, and the pictures for far-away houses are drawn only when first needed. If the engine is slow to arrive, cannot be loaded, or the browser has no WebGL 2, the note says so.
   - **Batching:** in view mode, the still parts of all objects that share a material are drawn as one mesh (about 200–350 draw calls for the whole scene instead of over 1,000). Edit mode shows the objects themselves, so everything stays editable; clicking an object for details works in both.

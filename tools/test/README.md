@@ -15,6 +15,8 @@ node nbtest.mjs test.html 260 7  # neighbour houses never disappear: occlusion c
 node boottest.mjs                # loading note: normal load, engine late, engine blocked, no WebGL
 node phototest.mjs test.html new high   # photo mode finishes without GL errors (compare with a baseline build)
 node shots.mjs new high test.html       # deterministic screenshots of 21 views; python3 cmp.py base new high compares two sets
+node ptexit.mjs test.html high          # path-traced photo: runs, restarts, and leaves the live scene exactly as it was
+PTO='{"samples":24}' node pttest.mjs test.html pt garden 24 480 300 ultra   # a path-traced picture of a view (garden, aerial, pool, kitchen, living, …) for review
 node lab_start.mjs test_prod.html 1280 800 1 0   # start-up timeline
 ```
 
